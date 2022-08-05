@@ -26,4 +26,4 @@ dependencies:
     - twopiece
     - git+https://github.com/pgromano/pinky.git
     - git+https://github.com/cristobal-sifon/lnr.git
-prefix: /Users/fsarron/opt/miniconda3/envs/detectifz
+prefix: /Users/fsarron/opt/miniconda3/envs/detectifz_devGH
