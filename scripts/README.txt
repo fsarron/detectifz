@@ -1,0 +1,1 @@
+./LAUNCH_TILES.sh WORKDIR=/Users/fsarron/lance_detectifz/HSC/HSC_FirstTest/ SCRIPTS_DIR=/Users/fsarron/softs/detectifz_dev/scripts/

@@ -1,4 +1,4 @@
-name: detectifz
+name: detectifz_dev
 channels:
   - conda-forge
   - defaults
@@ -10,9 +10,7 @@ dependencies:
   - photutils
   - scipy
   - Pillow
-  - ray
   - psutil
-  - random
   - shapely
   - reproject
   - h5py
@@ -23,7 +21,9 @@ dependencies:
   - matplotlib
   - pip
   - pip:
+    - ray
     - twopiece
+    - git+https://github.com/LSSTDESC/qp.git
     - git+https://github.com/pgromano/pinky.git
     - git+https://github.com/cristobal-sifon/lnr.git
-prefix: /Users/fsarron/opt/miniconda3/envs/detectifz
+prefix: /Users/fsarron/opt/miniconda3/envs/

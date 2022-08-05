@@ -92,7 +92,7 @@ class Data(object):
         #print('sample (M,z)')
         #self.Mz = self.sample_pdf()
         
-        galcat, galcat_mc, zz, pdz, MM, pdM, xyminmax = self.read_data(nprocs)
+        galcat, galcat_mc, zz, pdz, MM, pdM, xyminmax = self.read_data()
         self.galcat = galcat
         self.galcat_mc = galcat_mc
         self.galcat_mc_master = np.vstack(self.galcat_mc)
@@ -114,7 +114,7 @@ class Data(object):
         self.compute_Mlim()
 
     
-    def read_data(self,nprocs):
+    def read_data(self):
         '''
         read galaxy catalogue and HDF_PDF_Mz file and draw 100 realization from it
     

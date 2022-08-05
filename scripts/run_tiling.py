@@ -3,7 +3,7 @@ import re
 import time
 #import multiprocessing, logging
 
-import detectifz.prepare_data as data
+import detectifz.setup_data as data
 import detectifz.detectifz as detectifz
 import detectifz.tiling as tiling
 
