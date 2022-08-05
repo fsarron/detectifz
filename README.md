@@ -1,1 +1,0 @@
-# detectifz_dev
