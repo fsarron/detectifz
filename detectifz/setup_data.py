@@ -9,7 +9,7 @@ import ray
 import scipy.stats
 import qp
 from twopiece.scale import tpnorm
-from .utils import weighted_quantile
+from .utils import weighted_quantile, radec2detectifz
 
 from collections import namedtuple
 
@@ -18,6 +18,8 @@ import scipy.interpolate
 import time
 
 from astropy.convolution import convolve, Gaussian1DKernel, Gaussian2DKernel
+
+from astropy.coordinates import SkyCoord
 
 ###missing many imports
 
@@ -73,6 +75,9 @@ class Data(object):
         self.pdz_datatype = pdz_datatype
         self.pdM_datatype = pdM_datatype
         
+        ## get maglim mask
+        self.get_galcat()
+        
         ###get 1D PDFs (z and M)
         self.zz = np.arange(config.zmin_pdf, config.zmax_pdf+config.pdz_dz, config.pdz_dz)
         self.MM = np.arange(config.Mmin_pdf, config.Mmax_pdf+config.pdM_dM, config.pdM_dM)
@@ -92,8 +97,8 @@ class Data(object):
         #print('sample (M,z)')
         #self.Mz = self.sample_pdf()
         
-        galcat, galcat_mc, zz, pdz, MM, pdM, xyminmax = self.read_data()
-        self.galcat = galcat
+        galcat_mc, zz, pdz, MM, pdM, xyminmax = self.get_data_detectifz()
+        #self.galcat = galcat
         self.galcat_mc = galcat_mc
         self.galcat_mc_master = np.vstack(self.galcat_mc)
         self.zz = zz
@@ -112,15 +117,8 @@ class Data(object):
         
         print('get Mlim 90%')
         self.compute_Mlim()
-
-    
-    def read_data(self):
-        '''
-        read galaxy catalogue and HDF_PDF_Mz file and draw 100 realization from it
-    
-        Save an array containing the 100 MC galaxy catalogues with (id,ra,dec,z,M*) to .npz file
-        '''
-    
+        
+    def get_galcat(self):
         #galcat and pdz inputs
         gal0 = Table.read(self.rootdir+'/galaxies.'+self.field+'.galcat.fits')
         gal = gal0.filled(-99)
@@ -131,7 +129,7 @@ class Data(object):
                             self.config.M_med_colname,self.config.M_l68_colname, self.config.M_u68_colname,
                             self.config.obsmag_colname],
                            ['id',
-                            'ra','dec',
+                            'ra_original','dec_original',
                             'z', 'z_l68', 'z_u68',
                            'Mass_median','Mass_l68','Mass_u68',
                            'obsmag'])
@@ -141,9 +139,28 @@ class Data(object):
         self.obsmag90 = bin_edges[np.argmax(h)-1]
         
         #m90 = 22.
-        mask_m90 = gal['obsmag'] < self.obsmag90
-        gal = gal[mask_m90]
-
+        self.mask_m90 = gal['obsmag'] < self.obsmag90
+        self.galcat = gal[self.mask_m90]
+        
+        self.skycoords_center = SkyCoord(ra = np.median(gal['ra_original']), 
+                                                        dec = np.median(gal['dec_original']), unit='deg', frame='fk5')
+        
+        skycoords_galaxies  = SkyCoord(ra = gal['ra_original'], 
+                                                        dec = gal['dec_original'], unit='deg', frame='fk5')
+        
+        ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
+        
+        self.galcat.add_column(Column(ra_detectifz, name='ra'))
+        self.galcat.add_column(Column(dec_detectifz, name='dec'))
+        
+    
+    def get_data_detectifz(self):
+        '''
+        read galaxy catalogue and HDF_PDF_Mz file and draw 100 realization from it
+    
+        Save an array containing the 100 MC galaxy catalogues with (id,ra,dec,z,M*) to .npz file
+        '''
+                
         Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'
         #print(Mzf)
         if Path(Mzf).is_file():
@@ -155,26 +172,26 @@ class Data(object):
             np.savez(Mzf,Mz=Mz)
             Mz = Mz[mask_m90]
         
-        pdz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['pz'][mask_m90]
+        pdz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['pz'][self.mask_m90]
         zz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['z']
     
-        pdM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['pM'][mask_m90]
+        pdM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['pM'][self.mask_m90]
         MM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['M']
         #zz = np.linspace(0.01,5,500)
         #MM = np.linspace(5.025,12.975,160)
         
-        idmc = np.repeat(np.array(gal['id']),self.Nmc).reshape(len(gal),self.Nmc)
-        ramc = np.repeat(np.array(gal['ra']),self.Nmc).reshape(len(gal),self.Nmc)
-        decmc = np.repeat(np.array(gal['dec']),self.Nmc).reshape(len(gal),self.Nmc)
+        idmc = np.repeat(np.array(self.galcat['id']),self.Nmc).reshape(len(self.galcat),self.Nmc)
+        ramc = np.repeat(np.array(self.galcat['ra']),self.Nmc).reshape(len(self.galcat),self.Nmc)
+        decmc = np.repeat(np.array(self.galcat['dec']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         zmc = Mz[:,:,0]
         Mmc = Mz[:,:,1]
     
         galmc = np.stack([idmc,ramc,decmc,zmc,Mmc,]).T
         
-        xyminmax = np.array([gal['ra'].min(),gal['ra'].max(),
-                             gal['dec'].min(),gal['dec'].max()])
+        xyminmax = np.array([self.galcat['ra'].min(),self.galcat['ra'].max(),
+                             self.galcat['dec'].min(),self.galcat['dec'].max()])
     
-        return gal, galmc, zz, pdz, MM, pdM, xyminmax
+        return galmc, zz, pdz, MM, pdM, xyminmax
     
     
     def get_pdf(self, param):
@@ -197,6 +214,15 @@ class Data(object):
         if datatype == 'PDF' or Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file():
             ## we just have to read the file
             print('read the .npz file ...')
+            pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[pdf_name][self.mask_m90]
+            x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[param]
+            ## we should add a check that pdf and xx have the same sampling, 
+            ## allowing for round off differences
+            if np.all( np.round(x, 3) != np.round(xx, 3) ):
+                raise ValueError('sampling indicated in config.py for '+param+
+                             'differs from the one from the PDF file')
+                
+        elif Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz').is_file():
             pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[pdf_name]
             x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[param]
             ## we should add a check that pdf and xx have the same sampling, 
@@ -204,12 +230,12 @@ class Data(object):
             if np.all( np.round(x, 3) != np.round(xx, 3) ):
                 raise ValueError('sampling indicated in config.py for '+param+
                              'differs from the one from the PDF file')
-            
+        
         elif ( datatype == 'samples' and 
             not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
             ### do KDE estimate
             print('KDE estimate...')
-            dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+samples_fname+'.npz')['samples']
+            dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+samples_fname+'.npz')['samples'][self.mask_m90]
             pdf = np.array([scipy.stats.gaussian_kde(dataset[i])(xx) for i in range(len(dataset))])
         
         elif ( datatype == 'quantiles' and 
@@ -217,7 +243,7 @@ class Data(object):
             ## use qp to approxiamte PDF
             print('run qp estimate...')
             quantiles_def = np.load(self.rootdir+'/galaxies.'+self.field+'.'+quantiles_fname+'.npz')['quantiles_def']
-            quantiles = np.load(self.rootdir+'/galaxies.'+self.field+'.'+quantiles_fname+'.npz')['quantiles']
+            quantiles = np.load(self.rootdir+'/galaxies.'+self.field+'.'+quantiles_fname+'.npz')['quantiles'][self.mask_m90]
             dist = qp.stats.quant(quants=quantiles_def, locs=quantiles)
             pdf = dist.pdf(zz)        
         
@@ -228,7 +254,7 @@ class Data(object):
             #med = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['med']
             #l68 = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['l68']
             #u68 = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['u68']
-            tab = Table.read(self.rootdir+'/galaxies.'+self.field+'.galcat.fits')
+            tab = Table.read(self.rootdir+'/galaxies.'+self.field+'.galcat.fits')[self.mask_m90]
             
             if param == 'z':
                 med = np.array(tab[self.config.z_med_colname])
@@ -250,10 +276,10 @@ class Data(object):
                                  sigma2=sig_u68[i]).pdf(xx) 
                           for i in range(len(med))])
             if param == 'z':
-                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz', 
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
                          pz=pdf, z=xx)
             if param == 'M':
-                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz', 
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
                          pM=pdf, M=xx)
                            
         else:

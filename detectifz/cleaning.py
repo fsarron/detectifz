@@ -7,7 +7,7 @@ from photutils import SkyCircularAperture
 
 from scipy.ndimage.filters import gaussian_filter1d
 
-from .utils import angsep_radius, nan_helper
+from .utils import angsep_radius, nan_helper, detectifz2radec
 
 
 def group_consecutives(vals, step=1):
@@ -107,6 +107,13 @@ def cleaning(detectifz, det):
 
     clus.sort("z")
     # clus.write('candidats_'+field+'_SN'+SNmin+'.fits',overwrite=True)
+    
+    clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
+    ra_original, dec_original = detectifz2radec(detectifz.data.skycoords_center, 
+                                                clus['ra_detectifz', 'dec_detectifz'].to_pandas().to_numpy().T)
+    clus.add_column(Column(ra_original, name='ra'))
+    clus.add_column(Column(dec_original, name='dec'))
+
     return clus, detmult
 
 
