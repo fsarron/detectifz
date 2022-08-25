@@ -28,22 +28,8 @@ class Tile(object):
             raise TypeError('Could not init Tile object without corners')
             
             
-    def run_venice(self):
-        
-        if not Path(self.tilesdir).is_dir():
-            #process = subprocess.Popen(["mkdir", self.tilesdir])
-            #process.wait()
-            #result = process.communicate()
-            raise OSError('working directory does not exists, '+
-                          'you should create it and put'+
-                          'a config_detectifz_master.py file inside')
-            
-        if not Path(self.thistile_dir).is_dir():
-            process = subprocess.Popen(["mkdir", self.thistile_dir])
-            process.wait()
-            result = process.communicate()
-
-            
+    def run_venice_inout(self):
+ 
         self.FITSmasks.writeto(self.FITSmasks_filename, overwrite=True)
 
         coords = SkyCoord(ra = self.galcat_raw['ra'],
@@ -84,6 +70,85 @@ class Tile(object):
         result = process.communicate()
         
         
+        
+    def run_venice_pixelize(self):
+        
+        (rainf, rasup, 
+             decinf, decsup) = (
+                self.bottom_left[0], self.top_right[0], 
+                self.bottom_left[1], self.top_right[1] )
+            
+        ##lance venice to get pixelized mask at giuven resolution with given (ra,dec) limits
+        process = subprocess.Popen(["venice", 
+                                    "-m", 
+                                    self.master_masksfile, 
+                                    "-nx",
+                                    str(int((rasup-rainf)/self.pixdeg)),
+                                    "-ny",
+                                    str(int((decsup-decinf)/self.pixdeg)),
+                                    "-xmin", 
+                                    str(rainf),
+                                    "-xmax",
+                                    str(rasup),
+                                    "-ymin",
+                                    str(decinf),
+                                    "-ymax",
+                                    str(decsup),
+                                    "-o", 
+                                    self.thistile_dir+"/masks."+self.field+".tmp.mat"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE, 
+                                   text=True)
+        #print("the commandline is {}".format(process.args))
+        process.wait()
+        result = process.communicate()
+        #print(result)
+        flag = np.loadtxt(self.thistile_dir+'/masks.'+self.field+'.tmp.mat')
+        
+        ### from the pixelized matrix, make a fits hdu with WCS information
+        w = wcs.WCS(naxis=2)
+        w.wcs.crpix = [1.0, 1.0]
+        w.wcs.cdelt = np.array([self.pixdeg, self.pixdeg])
+        w.wcs.crval = [rainf, decinf]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        
+        self.FITSmasks = fits.PrimaryHDU(data=flag.astype(np.int8),header=w.to_header())
+        self.FITSmasks_filename = self.thistile_dir+'/masks.'+self.field+'.radec.fits'
+        self.FITSmasks.writeto(self.FITSmasks_filename, overwrite=True)
+
+        
+    def run_cutout(self):
+
+        (rainf, rasup, 
+             decinf, decsup) = (
+                self.bottom_left[0], self.top_right[0], 
+                self.bottom_left[1], self.top_right[1] )
+        
+        FITSmasks = fits.open(self.config_tile.masksfile)[0]
+        
+        ##SKY MASK (BAD REGIONS -- FITS IMAGE)
+        racentre = (rainf + rasup)/2.
+        deccentre = (decinf + decsup)/2.
+
+        size_sky_ra = (rasup - rainf) * units.deg
+        size_sky_dec = (decsup - decinf) * units.deg
+
+        centre_sky = SkyCoord(ra=racentre, 
+                                dec=deccentre, unit='deg', frame='icrs')
+            
+        FITScutout = Cutout2D(data = FITSmasks.data,
+                              position = centre_sky,
+                              size = (size_sky_dec, size_sky_ra),
+                              wcs = wcs.WCS(FITSmasks.header))
+            
+        self.FITSmasks = FITSmasks
+        self.FITSmasks.data = FITScutout.data
+        self.FITSmasks.header.update(FITScutout.wcs.to_header())
+                    
+            
+        self.galcat_raw_filename = self.thistile_dir+'/galaxies.'+self.field+'.galcat_raw.fits'
+        self.FITSmasks_filename = self.thistile_dir+'/masks.'+self.field+'.radec.fits'
+        
     def write_config_detectifz(self):
         
         f=open(self.tilesdir+'/config_master_detectifz.py','r')
@@ -96,6 +161,10 @@ class Tile(object):
         with open(self.thistile_dir+'/config_detectifz.py', 'w') as f:
             for line in self.config:
                 f.write(line)
+                
+                
+
+        
             
             
 class Tiles(object):
@@ -138,13 +207,13 @@ class Tiles(object):
                                       tilesdir = self.config_tile.tilesdir))
 
                 l += 1
+                
             
     def run_tiling(self):
         
         galcat_main = Table.read(self.config_tile.galcatfile)
 
         for i, tile in enumerate(self.tiles):
-            FITSmasks = fits.open(self.config_tile.FITSmasksfile)[0]
             (rainf, rasup, 
              decinf, decsup) = (
                 tile.bottom_left[0], tile.top_right[0], 
@@ -152,40 +221,44 @@ class Tiles(object):
             
             ##GALAXY CATALOGUE
             maskgal_tile  = ((galcat_main[self.config_tile.ra_colname] > rainf) &
-                             (galcat_main[self.config_tile.ra_colname] < rasup) & 
+                             (galcat_main[self.config_tile.ra_colname] <= rasup) & 
                              (galcat_main[self.config_tile.dec_colname] > decinf) &
-                             (galcat_main[self.config_tile.dec_colname] < decsup))
+                             (galcat_main[self.config_tile.dec_colname] <= decsup))
             
-            tile.galcat_raw = galcat_main[maskgal_tile]
+            tile.galcat = galcat_main[maskgal_tile]
             #tile.galcat_raw_filename = 'tile'
 
-    
-            ##SKY MASK (BAD REGIONS -- FITS IMAGE)
-            racentre = (rainf + rasup)/2
-            deccentre = (decinf + decsup)/2
-
-            size_sky_ra = (rasup - rainf) * units.deg
-            size_sky_dec = (decsup - decinf) * units.deg
-
-            centre_sky = SkyCoord(ra=racentre, 
-                                  dec=deccentre, unit='deg', frame='icrs')
-            
-            FITScutout = Cutout2D(data = FITSmasks.data,
-                              position = centre_sky,
-                              size = (size_sky_dec, size_sky_ra),
-                              wcs = wcs.WCS(FITSmasks.header))
-            
-            tile.FITSmasks = FITSmasks
-            tile.FITSmasks.data = FITScutout.data
-            tile.FITSmasks.header.update(FITScutout.wcs.to_header())
-            
             tile.thistile_dir = tile.tilesdir+'/tile'+'{:04d}'.format(tile.id)
+            tile.master_masksfile = self.config_tile.masksfile
+            tile.pixdeg = self.config_tile.pixdeg
+            
+            if not Path(tile.tilesdir).is_dir():
+                #process = subprocess.Popen(["mkdir", self.tilesdir])
+                #process.wait()
+                #result = process.communicate()
+                raise OSError('working directory does not exists, '+
+                          'you should create it and put'+
+                          'a config_detectifz_master.py file inside')
+            
+            if not Path(tile.thistile_dir).is_dir():
+                process = subprocess.Popen(["mkdir", tile.thistile_dir])
+                process.wait()
+                result = process.communicate()
             
             
-            tile.galcat_raw_filename = tile.thistile_dir+'/galaxies.'+tile.field+'.galcat_raw.fits'
-            tile.FITSmasks_filename = tile.thistile_dir+'/masks.'+tile.field+'.fits'
+            tile.galcat_filename = tile.thistile_dir+"/galaxies."+tile.field+".galcat.fits"
+            tile.galcat.write(tile.galcat_filename, overwrite=True) 
             
-            tile.run_venice()
+            if self.config_tile.maskstype == 'ds9' :
+                tile.run_venice_pixelize()
+                
+            elif self.config_tile.maskstype == 'fits' :
+                tile.run_cutout()
+                
+                
+                
+    
+            #tile.run_venice_inout()
             
             tile.write_config_detectifz()
             
