@@ -154,6 +154,14 @@ def Mlim_DETECTIFz(f_logMlim, masslim, z):
 
 
 def radec2detectifz(skycoords_center, skycoords_galaxies):
+    '''
+    Rotate the sphere so that the tile is centered at (ra, dec) = (0, 0)
+    This is roughly equivalent to the approximate multiplication of RA by cos(Dec)
+    used in e.g. AMASCFI, but is more mathematiocaaly justified and avoid approximation.
+    The rotation idea was taken from discussions in  (and strategy adopted by) 
+    the OU-LE3-CL of the Euclid consortium
+    '''
+    
     #convert skycoords_center, skycoords_galaxies (ra, dec) to (phi, theta)_radians
     phi = skycoords_galaxies.ra.radian
     theta = np.pi/2. - skycoords_galaxies.dec.radian # theta == pi/2 - dec
@@ -189,6 +197,15 @@ def radec2detectifz(skycoords_center, skycoords_galaxies):
 
 
 def detectifz2radec(skycoords_center, detectifz_coords):
+    '''
+    Rotate the sphere so that the tile centered at (ra, dec) = (0, 0) 
+    gets back to its original coordinate frame
+    The forward rotation is roughly equivalent to the approximate multiplication of RA by cos(Dec)
+    used in e.g. AMASCFI, but is more mathematiocaaly justified and avoid approximation.
+    The rotation idea was taken from discussions in (and strategy adopted by) 
+    the OU-LE3-CL of the Euclid consortium
+    '''
+    
     detectifz_x, detectifz_y = detectifz_coords
     #convert skycoords_center, detectifzcoords_galaxies (ra, dec) to (phi, theta)_radians
     phi = np.deg2rad(detectifz_x)
