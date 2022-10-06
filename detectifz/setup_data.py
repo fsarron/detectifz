@@ -145,16 +145,16 @@ class Data(object):
         self.galcat = gal[self.mask_m90]
         
         ## TO DO -- coord_change that then works with mask
-        self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
-                                                        dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
-         
-        skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
-                                                        dec = self.galcat['dec_original'], unit='deg', frame='fk5')
-         
-        ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
-        self.galcat.add_column(Column(ra_detectifz, name='ra'))
-        self.galcat.add_column(Column(dec_detectifz, name='dec'))
-        #self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
+        #self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
+        #                                                dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
+        # 
+        #skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
+        #                                                dec = self.galcat['dec_original'], unit='deg', frame='fk5')
+        # 
+        #ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
+        #self.galcat.add_column(Column(ra_detectifz, name='ra'))
+        #self.galcat.add_column(Column(dec_detectifz, name='dec'))
+        self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
         
     
     def get_data_detectifz(self):
