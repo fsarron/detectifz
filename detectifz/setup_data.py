@@ -1,6 +1,6 @@
 import numpy as np
 import numba as nb
-from astropy.table import Table
+from astropy.table import Table, Column
 import h5py
 from pathlib import Path
 from astropy.io import fits
@@ -9,7 +9,7 @@ import ray
 import scipy.stats
 import qp
 from twopiece.scale import tpnorm
-from .utils import weighted_quantile, radec2detectifz
+from .utils import weighted_quantile, radec2detectifz, numba_loop_kde
 
 from collections import namedtuple
 
@@ -63,8 +63,9 @@ class Data(object):
         print(self.rootdir)
         self.Nmc = config.Nmc
         self.lgmass_lim = config.lgmass_lim
-        self.masksfile = self.rootdir+'/masks.'+self.field+'.fits'
-        
+        self.masksfile_radec = self.rootdir+'/masks.'+self.field+'.radec.fits'
+        self.masksfile = self.rootdir+'/masks.'+self.field+'.radec.fits'   ## to modify for coord cahnge of masks
+
         self.pdf_Mz = config.pdf_Mz
         
         
@@ -134,24 +135,26 @@ class Data(object):
                            'Mass_median','Mass_l68','Mass_u68',
                            'obsmag'])
         
-        
-        h, bin_edges = np.histogram(gal['obsmag'], bins = np.arange(15,30,0.1))
-        self.obsmag90 = bin_edges[np.argmax(h)-1]
-        
+        if self.config.obsmag90 is None:
+            h, bin_edges = np.histogram(gal['obsmag'], bins = np.arange(10,30,0.1))
+            self.obsmag90 = bin_edges[np.argmax(h)-1]
+        else:
+            self.obsmag90 = self.config.obsmag90
         #m90 = 22.
         self.mask_m90 = gal['obsmag'] < self.obsmag90
         self.galcat = gal[self.mask_m90]
         
-        self.skycoords_center = SkyCoord(ra = np.median(gal['ra_original']), 
-                                                        dec = np.median(gal['dec_original']), unit='deg', frame='fk5')
-        
-        skycoords_galaxies  = SkyCoord(ra = gal['ra_original'], 
-                                                        dec = gal['dec_original'], unit='deg', frame='fk5')
-        
-        ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
-        
-        self.galcat.add_column(Column(ra_detectifz, name='ra'))
-        self.galcat.add_column(Column(dec_detectifz, name='dec'))
+        ## TO DO -- coord_change that then works with mask
+        #self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
+        #                                                dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
+        # 
+        #skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
+        #                                                dec = self.galcat['dec_original'], unit='deg', frame='fk5')
+        # 
+        #ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
+        #self.galcat.add_column(Column(ra_detectifz, name='ra'))
+        #self.galcat.add_column(Column(dec_detectifz, name='dec'))
+        self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
         
     
     def get_data_detectifz(self):
@@ -165,26 +168,39 @@ class Data(object):
         #print(Mzf)
         if Path(Mzf).is_file():
             print('samples already saved, we read it')
-            Mz = np.load(Mzf)['Mz'][mask_m90]
+            Mz = np.load(Mzf)['Mz'][self.mask_m90]
         else:    
             print('sample (M,z)...')
             Mz = self.sample_pdf()
             np.savez(Mzf,Mz=Mz)
-            Mz = Mz[mask_m90]
+            Mz = Mz[self.mask_m90]
         
-        pdz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['pz'][self.mask_m90]
-        zz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['z']
-    
-        pdM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['pM'][self.mask_m90]
-        MM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['M']
+        pdz_file_masked = self.rootdir+'/galaxies.'+self.field+'.pdz.masked_m90.npz'
+        if Path(pdz_file_masked).is_file():
+            pdz = np.load(pdz_file_masked)['pz']
+            zz = np.load(pdz_file_masked)['z']
+        else:
+            pdz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['pz'][self.mask_m90]
+            zz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['z']
+        
+        pdM_file_masked = self.rootdir+'/galaxies.'+self.field+'.pdM.masked_m90.npz'
+        if Path(pdM_file_masked).is_file():
+            pdM = np.load(pdM_file_masked)['pM']
+            MM = np.load(pdM_file_masked)['M']
+        else:
+            pdM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['pM'][self.mask_m90]
+            MM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['M']
+
+
+        #pdM_file_masked = self.rootdir+'/galaxies.'+self.field+'.pd
         #zz = np.linspace(0.01,5,500)
         #MM = np.linspace(5.025,12.975,160)
         
         idmc = np.repeat(np.array(self.galcat['id']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         ramc = np.repeat(np.array(self.galcat['ra']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         decmc = np.repeat(np.array(self.galcat['dec']),self.Nmc).reshape(len(self.galcat),self.Nmc)
-        zmc = Mz[:,:,0]
-        Mmc = Mz[:,:,1]
+        zmc = Mz[:,:,1]
+        Mmc = Mz[:,:,0]
     
         galmc = np.stack([idmc,ramc,decmc,zmc,Mmc,]).T
         
@@ -223,8 +239,8 @@ class Data(object):
                              'differs from the one from the PDF file')
                 
         elif Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz').is_file():
-            pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[pdf_name]
-            x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[param]
+            pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz')[pdf_name]
+            x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz')[param]
             ## we should add a check that pdf and xx have the same sampling, 
             ## allowing for round off differences
             if np.all( np.round(x, 3) != np.round(xx, 3) ):
@@ -235,8 +251,23 @@ class Data(object):
             not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
             ### do KDE estimate
             print('KDE estimate...')
-            dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+samples_fname+'.npz')['samples'][self.mask_m90]
-            pdf = np.array([scipy.stats.gaussian_kde(dataset[i])(xx) for i in range(len(dataset))])
+            if self.Mz_MC_exists:
+                if param == 'z':
+                    dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+
+                                      str(self.Nmc)+'MC.Mz.npz')['Mz'][self.mask_m90, :, 1]
+                if param == 'M':
+                    dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+
+                                      str(self.Nmc)+'MC.Mz.npz')['Mz'][self.mask_m90, :, 0]
+            else:
+                dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+samples_fname+'.npz')['samples'][self.mask_m90]
+            #pdf = np.array([scipy.stats.gaussian_kde(dataset[i])(xx) for i in range(len(dataset))])
+            pdf = numba_loop_kde(xx, dataset)
+            if param == 'z':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pz=pdf, z=xx)
+            if param == 'M':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pM=pdf, M=xx)
         
         elif ( datatype == 'quantiles' and 
             not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
@@ -309,57 +340,66 @@ class Data(object):
         ## we DO NOT consider the case PDF(z) + M(z) +/- eM(z) that almost never shows up
         '''
         
-        if self.pdf_Mz: ##only for backward compatibility, but photo-z code should return samples
+        if self.Mz_MC_exists:
             
-            start = time.time()
-            pdMzf = h5py.File(self.pdf_file,'r')
-            zz = pdMzf['z'][()]
-            MM = pdMzf['mass_bins'][()]
-            ext = [zz[0],zz[-1],MM[0],MM[-1]]
-
-            Mz = np.zeros((len(gal),self.Nmc,2))
-
-            for i in range(np.ceil(len(gal)/1000).astype(int)):
-                print('chuck',i)
-                idxi = np.arange(1000*(i),np.minimum(1000*(i+1),len(gal)))
-                pdMz = pdMzf['pdf_mass_z'][idxi][()]
-    
-                memo = 1.5*(pdMz.nbytes + Mz.nbytes)
-                mem_avail = psutil.virtual_memory().available    
-                if memo < 0.9*mem_avail:  
-                    memo_obj = int(0.9*memo)
-                    memo_heap = np.maximum(60000000,(memo - memo_obj))
-                    ray.init(num_cpus=int(1*nprocs),memory=memo_heap,
-                             object_store_memory=memo_obj,ignore_reinit_error=True,log_to_driver=False)
-                    pdMz_id = ray.put(pdMz) 
-    
-                    Mz[idxi[0]:idxi[-1]+1] = np.array(ray.get([
-                        MCsampling.remote(i,pdMz_id,self.Nmc,ext) for i,_ in enumerate(idxi)]))
+            Mz = np.load( self.rootdir+"/galaxies."+self.field+"."+
+                     str(int(self.Nmc))+"MC.Mz.npz" )['Mz']
         
-                    ray.shutdown() 
-                    #np.savez(Mzf,Mz=Mz)
-                else:
-                    raise ValueError('Not enough memory available : ',memo,'<',mem_avail)
-
-            print('MC sampling done in', time.time()-start,'s')   
-            
         else:
-            #print('###to implement using scipy.stats.rv_histogram -- fairly straight forward')
-            zz = self.zz
-            dz = zz[1]-zz[0]
-            zzbin = np.linspace(zz[0]-dz/2, zz[-1]+dz/2, len(zz)+1)
-            z = np.array([scipy.stats.rv_histogram((self.pdz[idx], zzbin)).rvs(size=self.Nmc) for idx in range(len(self.pdz))])
-        
-            MM = self.MM
-            dM= MM[1]-MM[0]
-            MMbin = np.linspace(MM[0]-dM/2, MM[-1]+dM/2, len(MM)+1)
-            M = np.array([scipy.stats.rv_histogram((self.pdM[idx], MMbin)).rvs(size=self.Nmc) for idx in range(len(self.pdM))])
             
-            Mz = np.moveaxis(np.stack([z,M]), 0, -1)
+            if self.pdf_Mz: ##only for backward compatibility, but photo-z code should return samples
+            
+                start = time.time()
+                pdMzf = h5py.File(self.pdf_file,'r')
+                zz = pdMzf['z'][()]
+                MM = pdMzf['mass_bins'][()]
+                ext = [zz[0],zz[-1],MM[0],MM[-1]]
+
+                Mz = np.zeros((len(gal),self.Nmc,2))
+
+                for i in range(np.ceil(len(gal)/1000).astype(int)):
+                    print('chuck',i)
+                    idxi = np.arange(1000*(i),np.minimum(1000*(i+1),len(gal)))
+                    pdMz = pdMzf['pdf_mass_z'][idxi][()]
+    
+                    memo = 1.5*(pdMz.nbytes + Mz.nbytes)
+                    mem_avail = psutil.virtual_memory().available    
+                    if memo < 0.9*mem_avail:  
+                        memo_obj = int(0.9*memo)
+                        memo_heap = np.maximum(60000000,(memo - memo_obj))
+                        ray.init(num_cpus=int(1*nprocs),memory=memo_heap,
+                             object_store_memory=memo_obj,ignore_reinit_error=True,log_to_driver=False)
+                        pdMz_id = ray.put(pdMz) 
+    
+                        Mz[idxi[0]:idxi[-1]+1] = np.array(ray.get([
+                            MCsampling.remote(i,pdMz_id,self.Nmc,ext) for i,_ in enumerate(idxi)]))
+        
+                        ray.shutdown() 
+                        #np.savez(Mzf,Mz=Mz)
+                    else:
+                        raise ValueError('Not enough memory available : ',memo,'<',mem_avail)
+
+                print('MC sampling done in', time.time()-start,'s')   
+            
+            else:
+                #print('###to implement using scipy.stats.rv_histogram -- fairly straight forward')
+                zz = self.zz
+                dz = zz[1]-zz[0]
+                zzbin = np.linspace(zz[0]-dz/2, zz[-1]+dz/2, len(zz)+1)
+                z = np.array([scipy.stats.rv_histogram((self.pdz[idx], zzbin)).rvs(size=self.Nmc) 
+                              for idx in range(len(self.pdz))])
+        
+                MM = self.MM
+                dM= MM[1]-MM[0]
+                MMbin = np.linspace(MM[0]-dM/2, MM[-1]+dM/2, len(MM)+1)
+                M = np.array([scipy.stats.rv_histogram((self.pdM[idx], MMbin)).rvs(size=self.Nmc) 
+                              for idx in range(len(self.pdM))])
+            
+                Mz = np.moveaxis(np.stack([z,M]), 0, -1)
                  
                 
-        Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'   
-        np.savez(Mzf,Mz=Mz)
+            Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'   
+            np.savez(Mzf,Mz=Mz)
         
         return Mz
     
@@ -380,10 +420,14 @@ class Data(object):
             if Path(sig_Mzf).is_file() and Path(sig_zf).is_file():
                 sig_Mz[i] = np.load(sig_Mzf)['sig']
                 sig_z[i] = np.load(sig_zf)['sig']
+                sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
+                sig_z[i] = np.maximum(0.01, sig_z[i])
             else:
                 ### we don't care about uncertainty on sig_z,
                 ### so we can run only on 2 MC realisations of the PDFs
                 sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,2)
+                sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
+                sig_z[i] = np.maximum(0.01, sig_z[i])
                 np.savez(sig_Mzf,sig=sig_Mz[i])
                 np.savez(sig_zf,sig=sig_z[i])
         

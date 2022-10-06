@@ -120,6 +120,7 @@ class DETECTIFz(object):
         pdzclusdetf = (self.config.rootdir+'/pdz_im3d.candidats_'+self.field+'_SN'+str(self.config.SNmin)+
                        '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')   
     
+        
         print('get catalogue')
         if Path(clusdetf).is_file() and Path(pdzclusdetf).is_file():
             print('clus and pdzclus file exists, we just read it')
@@ -155,12 +156,7 @@ class DETECTIFz(object):
                  pz=self.pdzclus_r200_clean,z=self.data.zz)
     
         '''
-    
-    
-    
-    
-    
-    
+
     
     
     

@@ -80,6 +80,19 @@ def get_one_smooth(d, indices, indptr):
         d[indptr[indices[vert]:indices[vert+1]]])   
     return dsmooth
 
+
+#@nb.njit()
+#def get_one_smooth(d, indices, indptr):
+#    npoints = len(d)
+#    dsmooth = np.zeros(npoints)
+#    for vert in range(npoints):
+#        if len(d[indptr[indices[vert]:indices[vert+1]]]) > 0:
+#            dsmooth[vert] = np.mean(
+#                d[indptr[indices[vert]:indices[vert+1]]])   
+#        else:
+#            dsmooth[vert] = d[vert]
+#    return dsmooth
+
 @nb.njit()
 def compute_dsmooth(d, indices, indptr, nsmooth):
     for _ in range(nsmooth):
@@ -159,6 +172,8 @@ def dtfe2d(all_inputs):
 
     """
     allpoints, pmask, proba, Nsmooth = all_inputs
+    p0 = np.copy(allpoints[0])
+    allpoints -= p0
     
     points = allpoints[pmask]
     dd = np.empty(len(allpoints))
@@ -167,7 +182,7 @@ def dtfe2d(all_inputs):
         tri = Delaunay(points)
         d = get_densities2d(tri.simplices, tri.points)
         if proba is not None:
-            d = d*proba
+            d *= proba
         if Nsmooth > 0:
             indices, indptr = tri.vertex_neighbor_vertices
             d = compute_dsmooth(d, indices, indptr, Nsmooth)
@@ -175,6 +190,7 @@ def dtfe2d(all_inputs):
         
         dd[~pmask] = LinearNDInterpolator(tri, 
                                 d)(allpoints[~pmask])
-        
+    allpoints += p0
+    
     return dd
 

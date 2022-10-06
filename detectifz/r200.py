@@ -277,7 +277,7 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     #print('start',indc)
     H0_fid = 70.
     Om0_fid=0.3
-    H0_mock = H0_fid
+    H0_mock = 73. #H0_fid
     Om0_mock = Om0_fid
     rrMpc_coarse = rrMpc[::2]
     warnings.simplefilter("ignore")
@@ -293,7 +293,9 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     w2d = wcs.WCS(head2d)
     weights = np.copy(weights_id)
 
-    zzbin = np.linspace(0.005,5.005,501)
+    #zzbin = np.linspace(0.005,5.005,501)
+    dz = zz[1]-zz[0]
+    zzbin = np.linspace(zz[0]-dz/2, zz[-1]+dz/2, len(zz)+1)
     jc = np.digitize(zclus,zzbin)-1
     sigz68_z = np.copy(sigz68_z_id[jc])
     pdzclus = np.copy(pdzclus_id[indc])

@@ -244,6 +244,8 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
             unmasked_area_r500kpc.value,
             unmasked_area_r1Mpc.value,
             unmasked_area_rdet.value,
+            det_table["max_value"],
+            det_table['segment_flux'],
         ]
         tab = tab[np.where(rr > 0.01)]
 
@@ -352,6 +354,8 @@ def detection(detectifz):
         "area_r500kpc",
         "area_r1Mpc",
         "area_rdet",
+        "max_value",
+        "segment_flux"
     ]
     for i, n in enumerate(det_tab.colnames):
         det_tab.rename_column(n, new_names[i])

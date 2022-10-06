@@ -3,7 +3,8 @@ import astropy.cosmology
 from astropy import units
 from pinky import Pinky
 import ray
-
+import numba as nb
+from scipy.spatial.transform import Rotation
 # cosmo
 
 
@@ -152,7 +153,6 @@ def Mlim_DETECTIFz(f_logMlim, masslim, z):
     return np.maximum(f_logMlim(z),masslim)
 
 
-
 def radec2detectifz(skycoords_center, skycoords_galaxies):
     #convert skycoords_center, skycoords_galaxies (ra, dec) to (phi, theta)_radians
     phi = skycoords_galaxies.ra.radian
@@ -163,25 +163,28 @@ def radec2detectifz(skycoords_center, skycoords_galaxies):
                                          ###the angle between (0,0) ad (ra_c, dec_c)
 
     #rz, ry from https://en.wikipedia.org/wiki/Rotation_matrix#In_three_dimensions
-    rz = np.array([[np.cos(phi_c), np.sin(phi_c), 0.0],
-                     [-np.sin(phi_c), np.cos(phi_c), 0.0],
-                     [0.0, 0.0, 1.0]])  ##Rz (!! numpy transpose) -- rotation by theta_c around z axis
-    ry = np.array([[np.cos(theta_c), 0.0, np.sin(theta_c)],
-                     [0.0, 1.0, 0.0],
-                     [-np.sin(theta_c), 0.0, np.cos(theta_c)]]) ##Ry (!! numpy transpose) --rotation by phi_c around y
+    rz = Rotation.from_matrix([[np.cos(phi_c), np.sin(phi_c), 0.0],
+                               [-np.sin(phi_c), np.cos(phi_c), 0.0],
+                               [0.0, 0.0, 1.0]])  ##Rz (!! transpose) -- rotation by theta_c around z axis
+    ry = Rotation.from_matrix([[np.cos(theta_c), 0.0, np.sin(theta_c)],
+                               [0.0, 1.0, 0.0],
+                               [-np.sin(theta_c), 0.0, np.cos(theta_c)]]) ##Ry (!! transpose) --rot by phi_c around y
 
-    rot_mat = np.matmul(ry, rz)  #rotation matrix
+    rot = ry * rz  #full rotation (around y and z axes)
 
     original_xyz = np.array([np.sin(theta)*np.cos(phi),
                    np.sin(phi)*np.sin(theta),
-                   np.cos(theta)])  ##[x,y,z] in original spherical coordinates  
+                   np.cos(theta)]).T  ##[x,y,z] in original spherical coordinates  
                                        
-    detectifz_xyz = np.matmul(rot_mat, original_xyz) ##apply rotation to original [x,y,x] to get [x,y,z]_rot in rotated frame
-
-    detectifz_phi = np.arctan2(detectifz_xyz[1], detectifz_xyz[0])  ## get phi in rotated frame from [x,y,z]_rot
-    detectifz_theta = np.arctan2(np.sqrt(detectifz_xyz[0]**2 + 
-                                       detectifz_xyz[1]**2), detectifz_xyz[2]) ## get theta in rotated frame from [x,y,z]_rot
-        
+    (detectifz_x, 
+     detectifz_y, 
+     detectifz_z) = rot.apply(original_xyz).T ##apply rotation to original [x,y,x] to get [x,y,z]_rot in rotated frame
+    
+    detectifz_phi = np.arctan2(detectifz_y, detectifz_x)  ## get phi in rotated frame from [x,y,z]_rot
+    detectifz_theta = np.arctan2(np.sqrt(detectifz_x**2 + 
+                                       detectifz_y**2), detectifz_z) ## get theta in rotated frame from [x,y,z]_rot 
+    
+    
     return np.rad2deg(detectifz_phi), np.rad2deg(np.pi / 2. - detectifz_theta) # dec == pi/2 - theta
 
 
@@ -197,28 +200,60 @@ def detectifz2radec(skycoords_center, detectifz_coords):
 
 
     #rz, ry from https://en.wikipedia.org/wiki/Rotation_matrix#In_three_dimensions
-    rz = np.array([[np.cos(phi_c), np.sin(phi_c), 0.0],
+    rz = Rotation.from_matrix([[np.cos(phi_c), np.sin(phi_c), 0.0],
                      [-np.sin(phi_c), np.cos(phi_c), 0.0],
                      [0.0, 0.0, 1.0]])  ##Rz (!! numpy transpose) -- rotation by theta_c around z axis
-    ry = np.array([[np.cos(theta_c), 0.0, np.sin(theta_c)],
+    ry = Rotation.from_matrix([[np.cos(theta_c), 0.0, np.sin(theta_c)],
                      [0.0, 1.0, 0.0],
                      [-np.sin(theta_c), 0.0, np.cos(theta_c)]]) ##Ry (!! numpy transpose) --rotation by phi_c around y
     
-    rot_mat = np.matmul(ry, rz).T  #rotation matrix -- The inverse of a rotation matrix is its transpose   
+    rot = (ry * rz).inv() #inverse of full rotation 
     
     detectifz_xyz = np.array([np.sin(theta)*np.cos(phi),
                    np.sin(phi)*np.sin(theta),
-                   np.cos(theta)])  ##[x,y,z] in original spherical coordinates  
+                   np.cos(theta)]).T  ##[x,y,z] in original spherical coordinates  
                                        
-    original_xyz = np.matmul(rot_mat, detectifz_xyz) ##apply rotation to original [x,y,x] to get [x,y,z]_rot in rotated frame
+    (original_x, 
+     original_y, 
+     original_z ) = rot.apply(detectifz_xyz).T ##apply rotation to original [x,y,x] to get [x,y,z]_rot in rotated frame
 
-    original_phi = np.arctan2(original_xyz[1], original_xyz[0])  ## get phi in rotated frame from [x,y,z]_rot
-    original_theta = np.arctan2(np.sqrt(original_xyz[0]**2 + 
-                                       original_xyz[1]**2), original_xyz[2]) ## get theta in rotated frame from [x,y,z]_rot
+    original_phi = np.arctan2(original_y, original_x)  ## get phi in rotated frame from [x,y,z]_rot
+    original_theta = np.arctan2(np.sqrt(original_x**2 + 
+                                       original_y**2), original_z) ## get theta in rotated frame from [x,y,z]_rot
     
     original_phi[original_phi < 0] += 2. * np.pi
     
     return np.rad2deg(original_phi), np.rad2deg(np.pi / 2. - original_theta) # dec == pi/2 - theta
+
+
+
+@nb.njit()
+def gaussian(x):
+    return np.exp(-0.5 * x**2) / np.sqrt(2 * np.pi)
+
+@nb.njit()
+def numba_kde(eval_points, samples, bandwidths):
+    result = np.zeros_like(eval_points)
+
+    for i, eval_x in enumerate(eval_points):
+        for sample, bandwidth in zip(samples, bandwidths):
+            result[i] += gaussian((eval_x - sample) / bandwidth) / bandwidth
+        result[i] /= len(samples)
+
+    return result
+
+@nb.njit(parallel=True)
+def numba_loop_kde(eval_points, samples):
+    result = np.zeros((len(samples), len(eval_points)))
+    
+    scott_factor = len(eval_points)**(-1./(1+4)) 
+
+    for igal in nb.prange(len(samples)):
+    
+        bandwidth = scott_factor * np.std(samples[igal])
+        result[igal] = numba_kde(eval_points, samples[igal], np.repeat(bandwidth, len(samples[igal])))
+
+    return result
 
 
 

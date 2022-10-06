@@ -10,11 +10,12 @@ import astropy.convolution
 import astropy.stats
 from astropy.io import fits
 from astropy import units
+from astropy.wcs.utils import proj_plane_pixel_area
 
 import ray
 import psutil
 import time
-import random
+#import random
 from shapely import geometry
 
 from scipy.ndimage.filters import gaussian_filter1d
@@ -40,7 +41,7 @@ def in_hull(p, hull):
     return hull.find_simplex(p) >= 0
 
 
-def fill_boundary(ra, dec, Nfill, boundary_width):
+def fill_boundary(ra, dec, nfill, area, boundary_width):
     """Add randomly distributed particles on the conve hull
     boundary of a distribution of points.
 
@@ -48,7 +49,8 @@ def fill_boundary(ra, dec, Nfill, boundary_width):
     ----------
     ra : np.array, right ascenscion of points
     dec : np.array, declination of points
-    Nfill: int, number of random points to add
+    nfill: float, density of random points to add in deg-2
+    area: float, unmasked area of field
     boundary_width: float, with of boundary region in degrees
 
     Returns
@@ -56,6 +58,8 @@ def fill_boundary(ra, dec, Nfill, boundary_width):
     point distribution (ra,dec) with random points on the
     boundary added at the beggining
     """
+    np.random.seed(12365)
+
     points = np.c_[ra, dec]
     hull = ConvexHull(points)
 
@@ -76,9 +80,21 @@ def fill_boundary(ra, dec, Nfill, boundary_width):
     ]
 
     ramin, ramax, decmin, decmax = minmax_buff
+    
+    area_max = (ramax-ramin)*(decmax-decmin) 
+    border_area = area_max - area
+    Nfill = int(nfill * border_area)
+    
     rardn, decrdn = np.random.uniform(ramin, ramax, Nfill), np.random.uniform(
         decmin, decmax, Nfill
     )
+    
+    ra_corners = np.array([ramin, ramin, ramax, ramax])
+    dec_corners = np.array([decmin, decmax, decmax, decmin])
+    
+    rardn = np.concatenate([rardn, ra_corners])
+    decrdn = np.concatenate([decrdn, dec_corners])
+
     radecrdn = np.c_[rardn, decrdn]
     radecfill = radecrdn[np.logical_not(in_hull(radecrdn, points[hull.vertices]))]
 
@@ -226,7 +242,7 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
     Convex Hull mask : np.array, mask of same size as im. True in the region
     where points are located, False outside
     """
-    print('islice', islice)
+    #print('islice', islice)
     xsize, ysize, xminmax, yminmax, pixdeg = map_params
     zslice = zslices[islice, 0]
     
@@ -252,14 +268,18 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
 
 
     # for points that appear in at least one MC realization fill border with random at mean density
-    random.seed(12365)
     boundary_width = min(angsep_radius(zslice, 2).value, 0.1)  # width of reflected boundary 2Mpc
-    ngal_fill = int(len(ra_slice) / Nmc)
+    area_unmasked = np.sum(masks) * proj_plane_pixel_area(wcs.WCS(headmasks))
+    
+    #ngal_fill = int(len(ra_slice) / Nmc)
+    nfill = int(np.mean([np.sum(mask_mc[imc][mask_mc_all]) for imc in range(Nmc)]))
+
     #print('ngal_fill', ngal_fill)
     radecfill = fill_boundary(
         ra_slice,
         dec_slice,
-        ngal_fill,
+        nfill,
+        area_unmasked,
         boundary_width
     )
     #print(len(radecfill))
@@ -275,7 +295,7 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
     #points_dtfe = np.concatenate([galcat_mc[0, :, 1:3],
     #                              radecfill])
     
-    densities = np.empty((Nmc,len(points_dtfe)))
+    #densities = np.empty((Nmc,len(points_dtfe)))
     dtfemc = np.zeros(len(points_dtfe))
     for imc in range(Nmc):
         mask_mc_all_imc = mask_mc[imc][mask_mc_all]
@@ -291,21 +311,29 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
         #mass_dtfe = 10**galcat_mc[imc,:,4][mask_mc[imc]] #[mask_mc_all]
         
         #print('npoints slice', len(points_dtfe),len(pmask_dtfe),np.sum(pmask_dtfe),len(mass_dtfe))
+        #print('islice', islice, 'imc', imc, 'npoints', np.sum(pmask_dtfe))
         
         inputs_dtfe2d = [points_dtfe, pmask_dtfe, mass_dtfe, 1]
-        #densities[imc] = np.log10(dtfe2d(inputs_dtfe2d))
+        #densities[imc] = dtfe2d(inputs_dtfe2d)
         #densities[imc] = dtfe2d(inputs_dtfe2d)
         dtfemc += np.log10(dtfe2d(inputs_dtfe2d))/Nmc
+        
+    #dtfemc = np.log10(np.nanmedian(densities, axis=0)) 
+    #np.savez('dtfemc_'+str(islice)+'.npz', points_dtfe=points_dtfe, 
+    #         pmask_dtfe = pmask_dtfe,
+    #         dtfemc=dtfemc)
     #dtfemc = np.log10(np.nanmean(densities,axis=0))
     #dtfemc = np.nanmean(np.log10(densities),axis=0)
     #dtfemc = np.nansum(densities,axis=0) #/Nmc
-
     x_m = np.linspace(np.min(xminmax), np.max(xminmax), xsize)
     y_m = np.linspace(np.min(yminmax), np.max(yminmax), ysize)
     x_m, y_m = np.meshgrid(x_m, y_m)
-    tri = Delaunay(points_dtfe[~np.isnan(dtfemc)])
-    grid_dtfemc = LinearNDInterpolator(tri, 
+    if len(points_dtfe[~np.isnan(dtfemc)]) > 3:
+        tri = Delaunay(points_dtfe[~np.isnan(dtfemc)])
+        grid_dtfemc = LinearNDInterpolator(tri, 
                                 dtfemc[~np.isnan(dtfemc)])(x_m,y_m)
+    else:
+        grid_dtfemc = np.zeros((ysize, xsize))
     kernel = astropy.convolution.Tophat2DKernel(
         radius=0.1 / physep_ang(zslice, pixdeg).value
     )

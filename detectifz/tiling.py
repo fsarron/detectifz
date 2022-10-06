@@ -15,15 +15,24 @@ from pathlib import Path
 
 class Tile(object):
     
-    def __init__(self, tileid=None, corners=None, field=None, tilesdir=None):
+    def __init__(self, tileid=None, corners=None, border_width=None, field=None, tilesdir=None):
         if not (corners is None): 
             self.id = tileid
+            self.corners = corners
+            self.border_width = border_width
             self.bottom_left = corners[0][0]
             self.top_left = corners[0][1]
             self.bottom_right = corners[1][0]
             self.top_right = corners[1][1]
             self.field = field
             self.tilesdir = tilesdir
+            
+            
+            self._core_bottom_left = tuple(np.add(corners[0][0] , (border_width, border_width)))
+            self._core_top_left = tuple(np.add(corners[0][1] , (border_width, -border_width)))
+            self._core_bottom_right =  tuple(np.add(corners[1][0], (-border_width, border_width)))
+            self._core_top_right = tuple(np.add(corners[1][1], (-border_width, -border_width)))
+            
         else:
             raise TypeError('Could not init Tile object without corners')
             
@@ -177,17 +186,17 @@ class Tiles(object):
     def get_tiles(self):
         ramin, ramax, decmin, decmax = self.config_tile.sky_lims
         max_area = self.config_tile.max_area
-        borderwidth = self.config_tile.border_width
+        border_width = self.config_tile.border_width
         
         total_area = (ramax-ramin)*(decmax-decmin)
         Nmin_tiles =  total_area/max_area
         Nsplit = np.ceil(np.sqrt(Nmin_tiles)).astype(int) + 1 
         
         ras = np.linspace(ramin, ramax, Nsplit)
-        rainfs, rasups = ras[:-1]-borderwidth, ras[1:]+borderwidth
+        rainfs, rasups = ras[:-1]-border_width, ras[1:]+border_width
 
         decs = np.linspace(decmin, decmax, Nsplit)
-        decinfs, decsups = decs[:-1]-borderwidth, decs[1:]+borderwidth
+        decinfs, decsups = decs[:-1]-border_width, decs[1:]+border_width
         
         c00 = np.meshgrid(rainfs, decinfs)
         c01 = np.meshgrid(rainfs, decsups)
@@ -202,11 +211,14 @@ class Tiles(object):
                 corners = [[(c00[0][i,j], c00[1][i,j]) , (c01[0][i,j], c01[1][i,j])],
                            [(c10[0][i,j], c10[1][i,j]), (c11[0][i,j], c11[1][i,j])]]
                 
-                self.tiles.append(Tile(tileid=l, corners=corners, 
+                tile = Tile(tileid=l, corners=corners, 
+                                       border_width = border_width,
                                        field=self.config_tile.field,
-                                      tilesdir = self.config_tile.tilesdir))
+                                      tilesdir = self.config_tile.tilesdir)
+                self.tiles.append(tile)
 
                 l += 1
+                
                 
             
     def run_tiling(self):
@@ -227,6 +239,8 @@ class Tiles(object):
             
             tile.galcat = galcat_main[maskgal_tile]
             #tile.galcat_raw_filename = 'tile'
+            if self.config_tile.Mz_MC_exists:
+                tile.Mz_MC = np.load(self.config_tile.Mz_MC_file)['Mz'][maskgal_tile]
 
             tile.thistile_dir = tile.tilesdir+'/tile'+'{:04d}'.format(tile.id)
             tile.master_masksfile = self.config_tile.masksfile
@@ -249,12 +263,29 @@ class Tiles(object):
             tile.galcat_filename = tile.thistile_dir+"/galaxies."+tile.field+".galcat.fits"
             tile.galcat.write(tile.galcat_filename, overwrite=True) 
             
+            if self.config_tile.Mz_MC_exists:
+                tile.Mz_MC_filename = ( tile.thistile_dir+"/galaxies."+tile.field+"."+
+                                       str(int(self.config_tile.nMC))+"MC.Mz.npz" )
+
+                np.savez(tile.Mz_MC_filename, Mz=tile.Mz_MC)
+            
             if self.config_tile.maskstype == 'ds9' :
                 tile.run_venice_pixelize()
                 
             elif self.config_tile.maskstype == 'fits' :
                 tile.run_cutout()
                 
+            elif self.config_tile.maskstype == 'none' :
+                f = open(self.config_tile.rootdir+'/'+self.config_tile.field+'_data/none.reg', "w")
+                f.write("# FILTER HSC-G\n")
+                f.write("wcs; fk5\n")
+                f.write("circle("+str(np.median(tile.galcat[self.config_tile.ra_colname]))+
+                        ","+str(np.median(tile.galcat[self.config_tile.dec_colname]))+
+                        ",0.00000001d)")
+                f.close()
+                self.master_masksfile = "none.reg"
+                
+                tile.run_venice_pixelize()
                 
                 
     
@@ -262,6 +293,13 @@ class Tiles(object):
             
             tile.write_config_detectifz()
             
+            np.savez(tile.thistile_dir+'/tile_object_init.npz', 
+                     tileid=tile.id, 
+                     corners=tile.corners, 
+                     border_width = tile.border_width,
+                     field=tile.field,
+                     tilesdir = tile.tilesdir)
+
             
 #        
 #        ###DETECTIFz CONFIG FILE

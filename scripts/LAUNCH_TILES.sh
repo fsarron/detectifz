@@ -22,21 +22,26 @@ echo "EXTRA_VALUES = $EXTRA_VALUES"
 ##TO DO PRIOR TO LAUNCH
 #mkdir $WORKDIR
 #cp $SCRIPTS_DIR/config_tile.py $WORKDIR
+#cp $SCRIPTS_DIR/config_master_detectifz_GAEA.py $WORKDIR/config_master_detectifz.py
 
 cd $WORKDIR
-cp $SCRIPTS_DIR/run_tiling.py .
-#python run_tiling.py -c config_tile.py
+#cp $SCRIPTS_DIR/run_tiling.py .
 
-field=`cat config_tile.py | grep 'field =' | awk '{print $3}'`
-field="${field#?}" # removes first character
-field="${field%?}"  # removes last character
+#field=`cat config_tile.py | grep 'field =' | awk '{print $3}'`
+#field="${field#?}" # removes first character
+#field="${field%?}"  # removes last character
+field='H15_UDS'
 echo
+#cp $SCRIPTS_DIR/config_master_detectifz_GAEA.py $WORKDIR/${field}_DETECTIFzrun/config_master_detectifz.py
+
+#python run_tiling.py -c config_tile.py
 
 for i in $(ls -d ${field}_DETECTIFzrun/*/)
 do 
     tileid=`echo ${i%%/} | awk -F / '{print $2}'`
     echo $tileid
     cd $WORKDIR/${i}
+    echo pwd
     cp $SCRIPTS_DIR/run_detectifz_tile.py .
     echo python run_detectifz_tile.py -c config_detectifz.py -t $tileid
     SECONDS=0
@@ -45,8 +50,13 @@ do
     echo
     echo $DURATION_IN_SECONDS
     echo
-
 done
+
+
+
+
+
+###################################
 
 
 

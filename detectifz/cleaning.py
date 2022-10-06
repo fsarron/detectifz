@@ -108,11 +108,12 @@ def cleaning(detectifz, det):
     clus.sort("z")
     # clus.write('candidats_'+field+'_SN'+SNmin+'.fits',overwrite=True)
     
-    clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
-    ra_original, dec_original = detectifz2radec(detectifz.data.skycoords_center, 
-                                                clus['ra_detectifz', 'dec_detectifz'].to_pandas().to_numpy().T)
-    clus.add_column(Column(ra_original, name='ra'))
-    clus.add_column(Column(dec_original, name='dec'))
+    #TO DO revert to ra, dec when coord_change !
+    #clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
+    #ra_original, dec_original = detectifz2radec(detectifz.data.skycoords_center, 
+    #                                            clus['ra_detectifz', 'dec_detectifz'].to_pandas().to_numpy().T)
+    #clus.add_column(Column(ra_original, name='ra'))
+    #clus.add_column(Column(dec_original, name='dec'))
 
     return clus, detmult
 
@@ -186,6 +187,8 @@ def clus_pdz_im3d(detectifz, smooth):
     nans, x = nan_helper(pdzclus)  # interpolate nans
     pdzclus[nans] = np.interp(x(nans), x(~nans), pdzclus[~nans])
     pdzclus = gaussian_filter1d(pdzclus, smooth, axis=1)
+    detectifz.clus.add_column(Column(np.max(pdzclus, axis=1), name='peak_ampl'))
+    detectifz.clus.add_column(Column(detectifz.data.zz[np.argmax(pdzclus, axis=1)], name='z_peak'))
 
     pdzclus = pdzclus / np.sum(pdzclus, axis=1)[:, None]
     pdzclus[nans] = 0
