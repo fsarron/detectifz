@@ -9,7 +9,7 @@ import ray
 import scipy.stats
 import qp
 from twopiece.scale import tpnorm
-from .utils import weighted_quantile, radec2detectifz, numba_loop_kde
+from .utils import weighted_quantile, radec2detectifz, detectifz2radec, numba_loop_kde
 
 from collections import namedtuple
 
@@ -18,10 +18,11 @@ import scipy.interpolate
 import time
 
 from astropy.convolution import convolve, Gaussian1DKernel, Gaussian2DKernel
-
 from astropy.coordinates import SkyCoord
+from astropy import wcs
 
-###missing many imports
+import subprocess
+
 
 @nb.njit(parallel=True)
 def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NMmax, 
@@ -145,16 +146,16 @@ class Data(object):
         self.galcat = gal[self.mask_m90]
         
         ## TO DO -- coord_change that then works with mask
-        #self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
-        #                                                dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
-        # 
-        #skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
-        #                                                dec = self.galcat['dec_original'], unit='deg', frame='fk5')
-        # 
-        #ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
-        #self.galcat.add_column(Column(ra_detectifz, name='ra'))
-        #self.galcat.add_column(Column(dec_detectifz, name='dec'))
-        self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
+        self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
+                                                        dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
+         
+        skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
+                                                        dec = self.galcat['dec_original'], unit='deg', frame='fk5')
+         
+        ra_detectifz, dec_detectifz = radec2detectifz(self.skycoords_center, skycoords_galaxies)
+        self.galcat.add_column(Column(ra_detectifz, name='ra'))
+        self.galcat.add_column(Column(dec_detectifz, name='dec'))
+        #self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
         
     
     def get_data_detectifz(self):
@@ -165,15 +166,19 @@ class Data(object):
         '''
                 
         Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'
+        Mzf_masked =  self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.masked_m90.npz'
         #print(Mzf)
-        if Path(Mzf).is_file():
+        if Path(Mzf_masked).is_file():
+            print('samples already saved, we read it')
+            Mz = np.load(Mzf_masked)['Mz']
+        elif Path(Mzf).is_file() and not(Path(Mzf_masked).is_file()):
             print('samples already saved, we read it')
             Mz = np.load(Mzf)['Mz'][self.mask_m90]
         else:    
             print('sample (M,z)...')
             Mz = self.sample_pdf()
-            np.savez(Mzf,Mz=Mz)
-            Mz = Mz[self.mask_m90]
+            np.savez(Mzf_masked,Mz=Mz)
+            #Mz = Mz[self.mask_m90]
         
         pdz_file_masked = self.rootdir+'/galaxies.'+self.field+'.pdz.masked_m90.npz'
         if Path(pdz_file_masked).is_file():
@@ -322,13 +327,120 @@ class Data(object):
 
 
     def get_masks(self):
-        ### need to load intermediate files 
-        ###- sigz68.mz., masks, etc - here and pass them to the functions that need them    
-        #masks_im = fits.getdata(self.masksfile)
-        #headmasks = fits.getheader(self.masksfile)
-        #return masks_im,headmasks
-        masks = fits.open(self.masksfile)[0]
-        return masks
+        ### convert radec mask (FITS with wcs) to DETECTIFz coordinates mask
+        masks_radec = fits.open(self.masksfile)[0]
+        
+        x = np.arange(masks_radec.header['NAXIS1'])
+        y = np.arange(masks_radec.header['NAXIS2'])
+        X, Y = np.meshgrid(x, y)
+        (ra_masks_radec, 
+         dec_masks_radec) = wcs.WCS(masks_radec).wcs_pix2world(X, Y, 0)
+        
+        skycoord_center = SkyCoord(ra=np.median(ra_masks_radec), 
+                                   dec=np.median(dec_masks_radec), 
+                                   unit='deg', frame='fk5')
+
+        
+        x_detectifz = np.zeros_like(ra_masks_radec)
+        y_detectifz = np.zeros_like(dec_masks_radec)
+
+        for i in range(masks_radec.header['NAXIS2']):
+            skycoord_galaxies = SkyCoord(ra=ra_masks_radec[i], 
+                                         dec=dec_masks_radec[i], 
+                                         unit='deg', frame='fk5')
+            (x_detectifz[i], 
+             y_detectifz[i]) = radec2detectifz(skycoord_center, skycoord_galaxies)
+            
+        xmin, xmax = x_detectifz.min(), x_detectifz.max()
+        ymin, ymax = y_detectifz.min(), y_detectifz.max()
+        
+        dlim = 0.0
+        
+        # first define grid limits and size
+
+        xsize = (((xmax + dlim) - (xmin - dlim)) / self.config.pixdeg).astype(int)
+        ysize = (((ymax + dlim) - (ymin - dlim)) / self.config.pixdeg).astype(int)
+
+        w = wcs.WCS(naxis=2)
+        w.wcs.crpix = [1, 1]
+        w.wcs.cdelt = np.array([self.config.pixdeg, self.config.pixdeg])
+        w.wcs.crval = [xmin - dlim, ymin - dlim]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+        headmasks_detectifz = w.to_header()
+        headmasks_detectifz.set("NAXIS", 2)
+        headmasks_detectifz.set("NAXIS1", xsize)
+        headmasks_detectifz.set("NAXIS2", ysize)
+        
+        x = np.arange(headmasks_detectifz['NAXIS1'])
+        y = np.arange(headmasks_detectifz['NAXIS2'])
+        X, Y = np.meshgrid(x, y)
+        x_masks_detectifz, y_masks_detectifz = wcs.WCS(headmasks_detectifz).wcs_pix2world(X, Y, 0)
+        
+        ra_masks_detectifz =  np.zeros_like(x_masks_detectifz)
+        dec_masks_detectifz =  np.zeros_like(y_masks_detectifz)
+
+        for i in range(headmasks_detectifz['NAXIS2']):
+            (ra_masks_detectifz[i], 
+             dec_masks_detectifz[i]) = detectifz2radec(skycoord_center, 
+                                                       (x_masks_detectifz[i], 
+                                                        y_masks_detectifz[i]))
+        
+        coords = SkyCoord(ra = ra_masks_detectifz.flatten(),
+                 dec = dec_masks_detectifz.flatten(), unit = 'deg', frame='fk5')
+        pix = wcs.utils.skycoord_to_pixel(coords, wcs = wcs.WCS(masks_radec.header))
+        pixcat = Table()
+        pixcat['xpix_mask'] = pix[0]
+        pixcat['ypix_mask'] = pix[1]
+        pixcat.write(self.rootdir+'/pixcat.fits', overwrite=True)
+                
+        try:
+            process = subprocess.Popen(["rm", self.rootdir+"pixcat_mask."self.field".tmp.fits"])
+            process.wait()
+            result = process.communicate()
+        except:
+            pass
+        
+        process = subprocess.Popen(["venice", "-cat", 
+                                    self.rootdir+"/pixcat.fits", 
+                                    "-catfmt", 
+                                    "fits", 
+                                    "-xcol", 
+                                    "xpix_mask", 
+                                    "-ycol", 
+                                    "ypix_mask", 
+                                    "-m", 
+                                    self.rootdir+"/masks."+self.field+".radec.fits", 
+                                    "-o", 
+                                    self.rootdir+"/pixcat_mask."+self.field+".tmp.fits"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE, 
+                                   text=True)
+        process.wait()
+        result = process.communicate()
+        #print(result)
+        
+        pixcat_masks = Table.read(self.rootdir+'/pixcat_mask.'+self.field+'.tmp.fits')
+        
+        hdu = fits.PrimaryHDU(np.array(pixcat_masks['flag']).reshape(
+            (headmasks_detectifz['NAXIS2'],
+             headmasks_detectifz['NAXIS1'])),
+                              header=headmasks_detectifz)
+        hdu.writeto(self.rootdir+'/masks.'+self.field+'.detectifz.fits', 
+                    overwrite=True)
+        
+        
+        try:
+            process = subprocess.Popen(["rm", 
+                                        self.rootdir+"pixcat.fits", 
+                                        self.rootdir+"pixcat_mask."self.field".tmp.fits"])
+            process.wait()
+            result = process.communicate()
+        except:
+            pass        
+        
+
+        return hdu
     
     
     def sample_pdf(self):
@@ -395,11 +507,11 @@ class Data(object):
                 M = np.array([scipy.stats.rv_histogram((self.pdM[idx], MMbin)).rvs(size=self.Nmc) 
                               for idx in range(len(self.pdM))])
             
-                Mz = np.moveaxis(np.stack([z,M]), 0, -1)
+                Mz = np.moveaxis(np.stack([M,z]), 0, -1)
                  
                 
-            Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'   
-            np.savez(Mzf,Mz=Mz)
+            #Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.masked_m90.npz'   
+            #np.savez(Mzf,Mz=Mz)
         
         return Mz
     
