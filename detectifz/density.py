@@ -1,3 +1,7 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import numpy as np
 from scipy.spatial import ConvexHull, Delaunay
 from scipy.interpolate import LinearNDInterpolator
@@ -24,7 +28,13 @@ from pathlib import Path
 
 from reproject import reproject_interp
 
+from joblib import Parallel, delayed
+
 from .utils import nan_helper, angsep_radius, physep_ang
+
+import warnings
+from astropy.utils.exceptions import AstropyWarning,AstropyUserWarning
+###missing many imports  
 
 def in_hull(p, hull):
     """
@@ -220,8 +230,8 @@ def get_dtfemc(islice, zslices, galmc_Mlim, Nmc, map_params, masks, headmasks):
 
 
 
-@ray.remote
-def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, masks, headmasks):
+@ray.remote(max_calls=10)
+def get_dtfemc_nogrid_ray(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, masks, headmasks):
     """Make DTFE overdensity map in one redshift slice.
 
     Parameters
@@ -242,7 +252,7 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
     Convex Hull mask : np.array, mask of same size as im. True in the region
     where points are located, False outside
     """
-    #print('islice', islice)
+    print('islice', islice)
     xsize, ysize, xminmax, yminmax, pixdeg = map_params
     zslice = zslices[islice, 0]
     
@@ -318,10 +328,13 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
         #densities[imc] = dtfe2d(inputs_dtfe2d)
         dtfemc += np.log10(dtfe2d(inputs_dtfe2d))/Nmc
         
+        
     #dtfemc = np.log10(np.nanmedian(densities, axis=0)) 
     #np.savez('dtfemc_'+str(islice)+'.npz', points_dtfe=points_dtfe, 
     #         pmask_dtfe = pmask_dtfe,
-    #         dtfemc=dtfemc)
+    #         mass_dtfe=mass_dtfe,
+    #         dtfemc=dtfemc
+    #        )
     #dtfemc = np.log10(np.nanmean(densities,axis=0))
     #dtfemc = np.nanmean(np.log10(densities),axis=0)
     #dtfemc = np.nansum(densities,axis=0) #/Nmc
@@ -352,6 +365,152 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_params, 
     grid_dtfemc[~hullmask] = np.nan
     
     return grid_dtfemc
+
+
+
+
+def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, lgM_dens, Nmc, map_params, masks, headmasks):
+    """Make DTFE overdensity map in one redshift slice.
+
+    Parameters
+    ----------
+    islice: int, slice index
+    zslices: np.array of size:3xN, redshift limits of all slices
+    galmc_Mlim: np.array, Monte Carlo realization of galaxy catalogue
+                with limiting stellar mass enforced
+    Nmc: int, number of Monte Carlo realizations
+    map_params : np.array or list, list of parameters defining
+                the density map resolution and limits defined as
+                [xsize,ysize,xminmax,yminmax,pixdeg]
+    masks: np.array dtype:bool, mask image
+    headmasks: astropy.io.fits `Header` object, mask header
+
+    Returns
+    -------
+    Convex Hull mask : np.array, mask of same size as im. True in the region
+    where points are located, False outside
+    """
+    #print('islice', islice)
+    xsize, ysize, xminmax, yminmax, pixdeg = map_params
+    zslice = zslices[islice, 0]
+    
+    #galmc_slice = np.empty(Nmc, dtype="object")
+    mask_mc = np.empty(Nmc, dtype="object")
+    for imc in range(Nmc):
+        mask_mc[imc] = ( (galcat_mc[imc][:, 3] >= zslices[islice, 1])
+                        & (galcat_mc[imc][:, 3] < zslices[islice, 2]) 
+                       & maskMlim_mc[imc])
+        #galmc_slice[imc] = galcat_mc[imc][mask_mc[imc]]
+    #Ngalslice_mc = np.array([len(galmc_slice[imc]) for imc in range(Nmc)])
+    mask_mc_all = np.sum(mask_mc, axis=0)
+    #galmc_slice_master = np.vstack(galmc_slice)
+
+    ra_slice, dec_slice = galcat_mc[0, mask_mc_all, 1:3].T
+    #points_slice = np.c_[ra_slice, dec_slice]
+    
+    # get convex hull mask
+    hullmask = convex_hull_toimage(ra_slice, dec_slice, headmasks, masks)
+        
+    #dtfe_mc = np.zeros((ysize, xsize))
+
+
+
+    # for points that appear in at least one MC realization fill border with random at mean density
+    boundary_width = min(angsep_radius(zslice, 2).value, 0.1)  # width of reflected boundary 2Mpc
+    area_unmasked = np.sum(masks) * proj_plane_pixel_area(wcs.WCS(headmasks))
+    
+    #ngal_fill = int(len(ra_slice) / Nmc)
+    nfill = int(np.mean([np.sum(mask_mc[imc][mask_mc_all]) for imc in range(Nmc)]))
+
+    #print('ngal_fill', ngal_fill)
+    radecfill = fill_boundary(
+        ra_slice,
+        dec_slice,
+        nfill,
+        area_unmasked,
+        boundary_width
+    )
+    #print(len(radecfill))
+    #print('ngal_fill', ngal_fill, radecfill)
+    ngal_fill = len(radecfill) #-= 1
+    massfill = np.repeat(10, ngal_fill)#len(radecfill))
+    #ra_dtfe = np.concatenate([galcat_mc[0, :, 1], radecfill[:, 0]])
+    #dec_dtfe = np.concatenate([galcat_mc[0, :, 2], radecfill[:, 1]])
+    #points_dtfe = np.c_[ra_dtfe,dec_dtfe]
+    
+    points_dtfe = np.concatenate([galcat_mc[0, :, 1:3][mask_mc_all],
+                                  radecfill])
+    #points_dtfe = np.concatenate([galcat_mc[0, :, 1:3],
+    #                              radecfill])
+    
+    #densities = np.empty((Nmc,len(points_dtfe)))
+
+    dtfemc = np.zeros(len(points_dtfe))
+    for imc in range(Nmc):
+        mask_mc_all_imc = mask_mc[imc][mask_mc_all]
+        pmask_dtfe = np.concatenate([mask_mc_all_imc,np.repeat(True, ngal_fill)])
+        if lgM_dens:
+            mass_dtfe = np.concatenate([10**galcat_mc[imc,:,4][mask_mc_all][mask_mc_all_imc],10**massfill])
+        else:
+            mass_dtfe = np.ones(np.sum(pmask_dtfe))
+
+        #pmask_dtfe = np.concatenate([mask_mc[imc],np.repeat(True, ngal_fill)])
+        #mass_dtfe = np.concatenate([10**galcat_mc[imc,:,4][mask_mc[imc]],10**massfill])
+        
+        #print('ngal_fill', ngal_fill, len(pmask_dtfe), len(points_dtfe))
+
+        #pmask_dtfe = mask_mc[imc][mask_mc_all]
+        #mass_dtfe = 10**galcat_mc[imc,:,4][mask_mc[imc]] #[mask_mc_all]
+        
+        #print('npoints slice', len(points_dtfe),len(pmask_dtfe),np.sum(pmask_dtfe),len(mass_dtfe))
+        #print('islice', islice, 'imc', imc, 'npoints', np.sum(pmask_dtfe))
+        
+        inputs_dtfe2d = [points_dtfe, pmask_dtfe, mass_dtfe, 1]
+        #densities[imc] = dtfe2d(inputs_dtfe2d)
+        #densities[imc] = dtfe2d(inputs_dtfe2d)
+        dtfemc += np.log10(dtfe2d(inputs_dtfe2d))/Nmc
+        
+        
+    #dtfemc = np.log10(np.nanmedian(densities, axis=0)) 
+    #np.savez('dtfemc_'+str(islice)+'.npz', points_dtfe=points_dtfe, 
+    #         pmask_dtfe = pmask_dtfe,
+    #         mass_dtfe=mass_dtfe,
+    #         dtfemc=dtfemc
+    #        )
+    #dtfemc = np.log10(np.nanmean(densities,axis=0))
+    #dtfemc = np.nanmean(np.log10(densities),axis=0)
+    #dtfemc = np.nansum(densities,axis=0) #/Nmc
+    x_m = np.linspace(np.min(xminmax), np.max(xminmax), xsize)
+    y_m = np.linspace(np.min(yminmax), np.max(yminmax), ysize)
+    x_m, y_m = np.meshgrid(x_m, y_m)
+    if len(points_dtfe[~np.isnan(dtfemc)]) > 3:
+        tri = Delaunay(points_dtfe[~np.isnan(dtfemc)])
+        grid_dtfemc = LinearNDInterpolator(tri, 
+                                dtfemc[~np.isnan(dtfemc)])(x_m,y_m)
+    else:
+        grid_dtfemc = np.zeros((ysize, xsize))
+    kernel = astropy.convolution.Tophat2DKernel(
+        radius=0.1 / physep_ang(zslice, pixdeg).value
+    )
+    grid_dtfemc = astropy.convolution.convolve(grid_dtfemc, kernel, 
+                                           preserve_nan=True)
+    mm = (masks & 
+          hullmask & 
+          np.logical_not(np.isnan(grid_dtfemc)))
+    #&(grid_dtfemc != 0) )
+    #print(grid_dtfemc[mm])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mu, _, sigma = astropy.stats.sigma_clipped_stats(
+        grid_dtfemc[mm], sigma=3.0)
+    meandens = 10 ** mu * np.exp(2.652 * sigma ** 2)
+    grid_dtfemc = grid_dtfemc - np.log10(meandens)
+    grid_dtfemc[np.where(np.isinf(grid_dtfemc))] = np.nan
+    grid_dtfemc[~hullmask] = np.nan
+    
+    return grid_dtfemc
+
+
 
 def get_dmap(detectifz):
     """Make 3D-DTFE overdensity map from 2D density maps in slices.
@@ -416,20 +575,32 @@ def get_dmap(detectifz):
         masks[np.where(masks > 0)] = 1
         masks[np.where(np.isnan(masks))] = 0
         masks = masks.astype(bool)
+    
+        if detectifz.config.lgM_dens:
+            print('')
+            print('COMPUTING STELLAR-MASS DENSITY')
+            print('')
+        else:
+            print('')
+            print('COMPUTING GALAXY DENSITY')
+            print('')
+
 
         start = time.time()
-
-        memo = 1.8*1024**3 #1.5 * (len(zslices) * xsize * ysize * 8)
-        mem_avail = 10*1024**3 #psutil.virtual_memory().available
+        
+        '''
+        memo = 10*1024**3 #1.5 * (len(zslices) * xsize * ysize * 8)
+        mem_avail = 20*1024**3 #psutil.virtual_memory().available
         if memo < 0.9 * mem_avail:
             memo_obj = int(0.9 * memo)
             ray.init(
                 num_cpus=int(1 * detectifz.config.nprocs),
                 object_store_memory=memo_obj,
-                ignore_reinit_error=True,
-                log_to_driver=False,
+                ignore_reinit_error=False,
+                log_to_driver=True,
+                include_dashboard=False
             )
-            '''
+            
             galmc_Mlim_id = ray.put(galmc_Mlim)
             zslices_id = ray.put(zslices)
             map_params = [xsize, ysize, xminmax, yminmax, pixdeg.value]
@@ -449,7 +620,7 @@ def get_dmap(detectifz):
                     ]
                 )
             )
-            '''
+            
             galmc_id = ray.put(detectifz.data.galcat_mc)
             maskMlim_mc_id =  ray.put(detectifz.maskMlim_mc)
             zslices_id = ray.put(detectifz.zslices)
@@ -474,14 +645,47 @@ def get_dmap(detectifz):
             ray.shutdown()
         else:
             raise ValueError("Not enough memory available : ", memo, "<", mem_avail)
+        else:
+        '''
+             
+        im3d_mass = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
+            delayed(get_dtfemc_nogrid)(
+                islice, 
+                detectifz.zslices, 
+                detectifz.data.galcat_mc, 
+                detectifz.maskMlim_mc, 
+                detectifz.config.lgM_dens,
+                detectifz.config.Nmc, 
+                [xsize, ysize, xminmax, yminmax, detectifz.config.pixdeg], 
+                masks, 
+                headmap)
+            for islice in range(len(detectifz.zslices))))
 
         end = time.time()
         print("total time DTFE (s)= " + str(end - start))
+        
+        '''
+        # write 3d image
+        centre, zinf, zsup = detectifz.zslices[:, 0], detectifz.zslices[:, 1], detectifz.zslices[:, 2]
+        w2d = wcs.WCS(headmap)
+        hdu = fits.PrimaryHDU(im3d_mass)
+        w3d = wcs.WCS(hdu.header)
+        w3d.wcs.ctype = ["RA---TAN", "DEC--TAN", "z"]
+        w3d.wcs.crval = [w2d.wcs.crval[0], w2d.wcs.crval[1], centre[0]]
+        w3d.wcs.crpix = [1, 1, 1]
+        w3d.wcs.cdelt = [w2d.wcs.cdelt[0], w2d.wcs.cdelt[1], 0.01]
+        hdu = fits.PrimaryHDU(im3d_mass, header=w3d.to_header())
+        hdu.writeto(imf, overwrite=True)
+        hdu = fits.PrimaryHDU(masks.astype(int), header=headmap)
+        hdu.writeto(wf, overwrite=True)
+        '''
+        
+        
 
         # convolution with 1D normal of sigma=dzmap in redshift space (remove high freq variations)
         nans, x = nan_helper(im3d_mass)  # interpolate nans
         im3d_mass[nans] = np.interp(x(nans), x(~nans), im3d_mass[~nans])
-        im3d_mass = gaussian_filter1d(im3d_mass, detectifz.config.dzmap / detectifz.config.dzslice, axis=0)
+        im3d_mass = gaussian_filter1d(im3d_mass, 1, axis=0)
 
         im3d_mass[nans] = np.nan  # put back nans to nan
 

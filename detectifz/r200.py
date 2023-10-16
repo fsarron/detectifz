@@ -11,6 +11,9 @@ from astropy import wcs
 import scipy.signal
 import astropy.cosmology
 
+from joblib import Parallel, delayed
+
+
 from .utils import angsep_radius, physep_ang, Mlim_DETECTIFz
 
 from astropy.coordinates import SkyCoord
@@ -272,7 +275,7 @@ def get_numdens(M, z, Mlim10_mc, zinf, zsup, Nmc):
     return NM_f_glob, dNM_f_glob
 
 
-@ray.remote(max_calls=50)
+#@ray.remote(max_calls=50)
 def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nmc,rrMpc,Mlim10_mc_id,zz):
     #print('start',indc)
     H0_fid = 70.
@@ -282,7 +285,7 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     rrMpc_coarse = rrMpc[::2]
     warnings.simplefilter("ignore")
 
-    clus = Table(clus_id,names=colnames)
+    clus = clus_id #Table(clus_id,names=colnames)
     raclus=clus['ra'][indc] 
     decclus=clus['dec'][indc] 
     zclus=clus['z'][indc]
@@ -405,7 +408,7 @@ def get_R200(detectifz):
         
         memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
         mem_avail = 10*1024**3 #psutil.virtual_memory().available
-        
+        '''
         if memo < 0.9*mem_avail:    
             memo_obj = int(0.9*memo)
             ray.init(num_cpus=detectifz.config.nprocs, 
@@ -422,38 +425,58 @@ def get_R200(detectifz):
             #Nmc = 10  #work on 10 realisation only for speed
             res = ray.get([R200.remote(indc, clus_id, detectifz.clus.colnames, 
                                        weights_id, detectifz.head2d, pdzclus_id, 
-                                       sigz68_z_id, galmc_id, detectifz.config.Nmc_fast, rrMpc, 
+                                       sigz68_z_id, galmc_id, detectifz.config.Nmc, rrMpc, 
                                        Mlim10_mc_id, detectifz.data.zz) 
                            for indc in range(nclus)],timeout=5000)  
 
             ray.shutdown()
             res = np.array(res)
-            r200c = np.stack(res[:,0]) 
-            DELTA_gal_coarse = res[:,1]
-            dDELTA_gal_coarse = res[:,2]
-            DELTA_gal_fine = res[:,3]
-            dDELTA_gal_fine = res[:,4]
-            rrMpc_fine = res[:,5]
-            r200fit = np.stack(res[:,6])
-            isfine = res[:,7]
-            
-            np.savez('dM_'+detectifz.field+'.r200.npz',r200c=r200c, 
-                     DELTA_gal_coarse=DELTA_gal_coarse, 
-                     dDELTA_gal_coarse=dDELTA_gal_coarse, 
-                     DELTA_gal_fine=DELTA_gal_fine, 
-                     dDELTA_gal_fine=dDELTA_gal_fine,
-                     rrMpc_fine=rrMpc_fine,
-                     r200fit=r200fit,
-                     isfine=isfine)
-            
-            clus_r200 = Table(detectifz.clus,names=detectifz.clus.colnames,copy=True)
-            clus_r200.add_column(Column(r200c,name='R200c_Mass_nofit'))
-            clus_r200.add_column(Column(r200fit[:,1],name='R200c_Mass_median'))
-            clus_r200.add_column(Column(r200fit[:,0],name='R200c_Mass_l68'))
-            clus_r200.add_column(Column(r200fit[:,2],name='R200c_Mass_u68'))
-            clus_r200.write(clusf,overwrite=True)
-            print('R200 done in', time.time()-start,'s')
+        '''
+        
+        res = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
+            delayed(R200)(
+                indc, 
+                detectifz.clus, 
+                detectifz.clus.colnames, 
+                detectifz.weights2d, 
+                detectifz.head2d, 
+                detectifz.pdzclus, 
+                detectifz.data.sigs.sigz68_z, 
+                detectifz.data.galcat_mc, 
+                detectifz.config.Nmc, 
+                rrMpc, 
+                Mlim10_mc, 
+                detectifz.data.zz)
+            for indc in range(nclus)))
+        
+        r200c = np.stack(res[:,0]) 
+        DELTA_gal_coarse = res[:,1]
+        dDELTA_gal_coarse = res[:,2]
+        DELTA_gal_fine = res[:,3]
+        dDELTA_gal_fine = res[:,4]
+        rrMpc_fine = res[:,5]
+        r200fit = np.stack(res[:,6])
+        isfine = res[:,7]
+
+        np.savez('dM_'+detectifz.field+'.r200.npz',r200c=r200c, 
+                 DELTA_gal_coarse=DELTA_gal_coarse, 
+                 dDELTA_gal_coarse=dDELTA_gal_coarse, 
+                 DELTA_gal_fine=DELTA_gal_fine, 
+                 dDELTA_gal_fine=dDELTA_gal_fine,
+                 rrMpc_fine=rrMpc_fine,
+                 r200fit=r200fit,
+                 isfine=isfine)
+
+        clus_r200 = Table(detectifz.clus,names=detectifz.clus.colnames,copy=True)
+        clus_r200.add_column(Column(r200c,name='R200c_Mass_nofit'))
+        clus_r200.add_column(Column(r200fit[:,1],name='R200c_Mass_median'))
+        clus_r200.add_column(Column(r200fit[:,0],name='R200c_Mass_l68'))
+        clus_r200.add_column(Column(r200fit[:,2],name='R200c_Mass_u68'))
+        clus_r200.write(clusf,overwrite=True)
+        print('R200 done in', time.time()-start,'s')
+        '''
         else:
             raise ValueError('Not enough memory available : ',memo,'<',mem_avail)
+        '''    
              
     return clus_r200 

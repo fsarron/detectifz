@@ -1,3 +1,7 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import sys
 import numpy as np
 #import numba as nb
@@ -16,11 +20,9 @@ import time
 
 import warnings
 from astropy.utils.exceptions import AstropyWarning,AstropyUserWarning
-###missing many imports
+###missing many imports  
 
-global nprocs
-nprocs=8
-avg='68p'  
+warnings.filterwarnings("ignore")
 
 #def Mlim(field,masslim,z):
 #    if field == 'UDS' or field == 'H15_UDS':
@@ -40,39 +42,65 @@ class DETECTIFz(object):
         self.field = field
         self.data = data
         self.config = config
-        self.config.Nmc = self.config.Nmc_fast
+        #self.config.Nmc = self.config.Nmc
         
         print('run gal_Mlim')
         self.get_galMlim()
        
         print('run zslice')
         self.create_slices_sigz()
-        np.savez(self.config.rootdir+'/zslices.'+self.field+
-                       '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz', zslices = self.zslices)
+        np.savez(self.config.rootdir+
+                 '/zslices.'+self.field+
+                 '_Mlim'+str(np.round(self.config.lgmass_lim,2))+
+                 '.sigz68_z_'+self.config.avg+'.npz', 
+                 zslices = self.zslices)
         
         
     def get_galMlim(self):
-        field,masslim,z = self.data.field,self.config.lgmass_lim,self.data.galcat_mc[:,:,3]
+ 
+        z_mc, z_mc_master, z_galcat = (self.data.galcat_mc[:,:,3],
+                                      self.data.galcat_mc_master[:,3],
+                                      self.data.galcat['z'])
         ##force z in the interpolation range
-        z = np.minimum(np.maximum(self.data.zz[0], z), self.data.zz[-1])
-        self.maskMlim_mc = self.data.galcat_mc[:,:,4] > Mlim_DETECTIFz(self.data.logMlim90,masslim,z)
-    
+        z_mc, z_mc_master, z_galcat = (
+            np.minimum(np.maximum(self.data.zz[0], z_mc), self.data.zz[-1]),
+            np.minimum(np.maximum(self.data.zz[0], z_mc_master), self.data.zz[-1]),
+            np.minimum(np.maximum(self.data.zz[0], z_galcat), self.data.zz[-1]))
+     
+            
+        if self.config.selection == 'legacy' or self.config.selection == 'maglim':
+
+            lgM_lim_mc = Mlim_DETECTIFz(self.data.logMlim90,
+                                        self.data.lgmass_lim,
+                                        z_mc)
+            lgM_lim_mc_master = Mlim_DETECTIFz(self.data.logMlim90,
+                                        self.data.lgmass_lim,
+                                        z_mc_master)
+            lgM_lim_galcat = Mlim_DETECTIFz(self.data.logMlim90,
+                                        self.data.lgmass_lim,
+                                        z_galcat)
+        
+        elif self.config.selection == 'masslim':
+            lgM_lim_mc = self.data.lgmass_lim
+            lgM_lim_mc_master = self.data.lgmass_lim
+            lgM_lim_galcat = self.data.lgmass_lim
+            
+        
+        ### galmc    
+        self.maskMlim_mc = self.data.galcat_mc[:,:,4] >= lgM_lim_mc
         self.galcatmc_Mlim = np.empty(self.data.Nmc,dtype='object')
         for i in range(self.data.Nmc):
             self.galcatmc_Mlim[i] = self.data.galcat_mc[i][self.maskMlim_mc[i]]
-    
-        field,masslim,z = self.data.field,self.data.lgmass_lim,self.data.galcat_mc_master[:,3]
-        ##force z in the interpolation range
-        z = np.minimum(np.maximum(self.data.zz[0], z), self.data.zz[-1])
-        maskMlim_master = self.data.galcat_mc_master[:,4] > Mlim_DETECTIFz(self.data.logMlim90,masslim,z)
+
+        ### galmc_master
+        maskMlim_master = self.data.galcat_mc_master[:,4] >= lgM_lim_mc_master
         self.galcatmc_master_Mlim = self.data.galcat_mc_master[maskMlim_master]
         
-        field,masslim,z = self.data.field,self.data.lgmass_lim,self.data.galcat['z']
-        ##force z in the interpolation range
-        z = np.minimum(np.maximum(self.data.zz[0], z), self.data.zz[-1])
-        maskMlim = self.data.galcat['Mass_median'] > Mlim_DETECTIFz(self.data.logMlim90,masslim,z)
+        ### galcat
+        maskMlim = self.data.galcat['Mass_median'] >= lgM_lim_galcat
         self.galcat_Mlim = self.data.galcat[maskMlim]
-        self.pdz_Mlim = self.data.pdz[maskMlim]
+        #self.pdz_Mlim = self.data.pdz[maskMlim]
+            
         
     def create_slices_sigz(self):
         zcentre0=self.config.zmin 
@@ -90,9 +118,9 @@ class DETECTIFz(object):
                 zlow.append(zcentre[i] - max(0.01,self.data.sigs.sigz68_z[jj]))
                 zhigh.append(zcentre[i] + max(0.01,self.data.sigs.sigz68_z[jj]))
             else:
-                raise ValueError("There is a z>=0.1 at which sigz68 == 0. Check sigz file")
+                raise ValueError("There is a z>=zmin at which sigz68 <= 0. Check sigz file")
     
-            zcentre.append(zcentre[i]+self.config.dzslice)
+            zcentre.append(zcentre[i]+self.config.dzmap)
             i = i+1
         
 
@@ -101,7 +129,7 @@ class DETECTIFz(object):
         zsup = np.array(zhigh[1:])
         
         self.zslices = np.c_[centre,zinf,zsup]
-        
+        self.zslices = self.zslices[zinf > self.config.zmin]  #added compared to Legacy version (Sarron+21)
         
 
     def run(self):
@@ -110,7 +138,6 @@ class DETECTIFz(object):
             warnings.simplefilter('ignore', category=AstropyWarning)
             warnings.simplefilter('ignore', category=AstropyUserWarning)
             warnings.simplefilter("ignore")
-        
         
         print('run get_dmap')
         self.im3d,self.weights2d,self.head2d = density.get_dmap(self)
@@ -132,14 +159,14 @@ class DETECTIFz(object):
        
             print('run cleaning')
             self.clus, self.selfsubdets = cleaning.cleaning(self,alldet)
-    
+            self.clus.write(clusdetf,overwrite=True)
             print('run clus_pdz')
         #clus,pdzclus = clus_pdz(survey,gal_Mlim,pdz_Mlim,zz,masks_im,headmasks,clus0,2)
             self.pdzclus = cleaning.clus_pdz_im3d(self,1)
-            self.clus.write(clusdetf,overwrite=True)
+            #self.clus.write(clusdetf,overwrite=True)
             np.savez(pdzclusdetf,pz=self.pdzclus,z=self.data.zz)
         
-        '''
+       
         print('run R200')
         clus_r200 = r200.get_R200(self)
     
@@ -155,11 +182,8 @@ class DETECTIFz(object):
                  '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.r200.clean.npz',
                  pz=self.pdzclus_r200_clean,z=self.data.zz)
     
-        '''
+        
 
-    
-    
-    
     
     def run_Pmem(self):
     

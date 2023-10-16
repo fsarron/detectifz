@@ -12,10 +12,41 @@ from astropy import wcs
 import subprocess
 from pathlib import Path
 
+import numba as nb
+
+from astropy.convolution import convolve, Gaussian1DKernel, Gaussian2DKernel
+
+
+@nb.njit(parallel=True)
+def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NMmax, 
+                    idx_lgmass_lim, quantile, Nmc):
+    mask_Mlim = (binM_MC >= idx_lgmass_lim)
+    sig_Mz = np.zeros((Nz,NM))
+    sig_z = np.zeros(Nz)
+    for iz in nb.prange(Nzmin, Nzmax):
+        for iMC in range(Nmc):
+            mask_z = (binz_MC[iMC] == iz)
+            m = mask_z & mask_Mlim[iMC]
+            s = sig_indiv[m]
+            try:
+                sig_z[iz] = np.quantile(s, quantile)
+            except:
+                continue
+            for jM in range(NMmin, NMmax):
+                mask_M = (binM_MC[iMC] == jM)
+                m = mask_z & mask_M
+                s = sig_indiv[m]
+                try:
+                    sig_Mz[iz, jM] = np.quantile(s, quantile) 
+                except:
+                    continue
+    return sig_Mz, sig_z
+
+
 
 class Tile(object):
     
-    def __init__(self, tileid=None, corners=None, border_width=None, field=None, tilesdir=None):
+    def __init__(self, tileid=None, corners=None, border_width=None, field=None, release=None, tilesdir=None):
         if not (corners is None): 
             self.id = tileid
             self.corners = corners
@@ -25,8 +56,8 @@ class Tile(object):
             self.bottom_right = corners[1][0]
             self.top_right = corners[1][1]
             self.field = field
+            self.release = release
             self.tilesdir = tilesdir
-            
             
             self._core_bottom_left = tuple(np.add(corners[0][0] , (border_width, border_width)))
             self._core_top_left = tuple(np.add(corners[0][1] , (border_width, -border_width)))
@@ -160,21 +191,21 @@ class Tile(object):
         
     def write_config_detectifz(self):
         
-        f=open(self.tilesdir+'/config_master_detectifz.py','r')
+        f=open(self.tilesdir+'/config_master_detectifz.ini','r')
         self.config = f.readlines()
         f.close()
         self.config.append("\n")
-        self.config.append("field='"+self.field+"'\n")
-        self.config.append("rootdir='"+self.thistile_dir+"'\n")
+        self.config.append("[GENERAL]")
+        self.config.append("\n")
+        self.config.append("field="+self.field+"\n")
+        self.config.append("release="+self.release+"\n")
+        self.config.append("rootdir="+self.thistile_dir+"/ \n")
         
-        with open(self.thistile_dir+'/config_detectifz.py', 'w') as f:
+        with open(self.thistile_dir+'/config_detectifz.ini', 'w') as f:
             for line in self.config:
                 f.write(line)
                 
-                
-
-        
-            
+ 
             
 class Tiles(object):
 
@@ -184,7 +215,17 @@ class Tiles(object):
             raise TypeError('Could not init Tiles object without config file')   
             
     def get_tiles(self):
-        ramin, ramax, decmin, decmax = self.config_tile.sky_lims
+                    
+        self.config_tile.tilesdir = (self.config_tile.tiles_rootdir+
+                                     '/'+self.config_tile.field+
+                                     '/'+self.config_tile.release)
+        Path(self.config_tile.tilesdir).mkdir(parents=True, exist_ok=True)   
+        
+        
+        ramin, ramax, decmin, decmax = (self.config_tile.ramin, 
+                                        self.config_tile.ramax, 
+                                        self.config_tile.decmin, 
+                                        self.config_tile.decmax )
         max_area = self.config_tile.max_area
         border_width = self.config_tile.border_width
         
@@ -214,16 +255,185 @@ class Tiles(object):
                 tile = Tile(tileid=l, corners=corners, 
                                        border_width = border_width,
                                        field=self.config_tile.field,
+                                      release=self.config_tile.release,
                                       tilesdir = self.config_tile.tilesdir)
                 self.tiles.append(tile)
 
                 l += 1
                 
                 
+    def compute_sig_MC(self,conflim,psig,avg,nprocs,Nmc):
+        sig_indiv = np.array(0.5*(self.galcat[psig+'_u'+conflim]-self.galcat[psig+'_l'+conflim]))
+        quantile = int(avg[:-1])*0.01
+
+        dz = 0.5*np.diff(self.zz)[0]
+        Nz = len(self.zz)
+        zzbin = np.linspace(self.zz[0]-dz,self.zz[-1]+dz,Nz+1) 
+        binz_MC = np.digitize(self.galcat_mc[:Nmc,:,0],zzbin)-1
+
+        dM = 0.5*np.diff(self.MM)[0]
+        NM = len(self.MM)
+        MMbin = np.linspace(self.MM[0]-dM,self.MM[-1]+dM,NM+1)        
+        binM_MC = np.digitize(self.galcat_mc[:Nmc,:,1],MMbin)-1  
+
+        idx_lgmass_lim = np.digitize(self.config_tile.lgmass_lim,MMbin)-1
+
+        Nzmax = int(min(Nz, ((self.config_tile.zmax + 0.1*(1+self.config_tile.zmax)) / (2*dz))))
+        Nzmin = int(max(0, ((self.config_tile.zmin - 0.1*(1+self.config_tile.zmin)) / (2*dz))))
+
+        NMmin = int(np.nanmin(binM_MC))
+        NMmax = int(np.nanmax(binM_MC))
+
+        #print(Nzmin, Nzmax, NMmin, NMmax)
+
+        nb.set_num_threads(int(self.config_tile.nprocs))
+
+        print('init numba func')
+        _, _ = quantile_sig_mc(sig_indiv, binz_MC, Nz, 0, 1, 
+                               binM_MC, NM, 0, 1, 
+                               idx_lgmass_lim, quantile, 1)
+        print('run get sig')
+        sig_Mz, sig_z = quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, 
+                                        binM_MC, NM, NMmin, NMmax, 
+                                        idx_lgmass_lim, quantile, Nmc)
+        print('done')
+        
+        kernel1d = Gaussian1DKernel(1)
+        sig_z = convolve(sig_z, kernel1d)
+        kernel2d = Gaussian2DKernel(1)
+        sig_Mz = convolve(sig_Mz, kernel2d)
+
+        return sig_Mz, sig_z
+
+                
+    def get_sig(self):
+        
+        avg,nprocs,fit_Olga = self.config_tile.avg, self.config_tile.nprocs, self.config_tile.fit_Olga
+    
+        sig_Mz = np.empty(2,dtype='object')
+        sig_z = np.empty(2,dtype='object')
+        
+        
+        self.rootdir = self.config_tile.tiles_rootdir + self.config_tile.field + '/' + self.config_tile.release
+        
+
+        psig='z'
+        for i,conflim in enumerate([self.config_tile.conflim_1sig]):
+            #for j,psig in enumerate(['z']): #,'Mass']):
+            if fit_Olga:
+                self.sig_Mzf = self.rootdir+'/sig'+psig+conflim+'.Mz.'+self.config_tile.field+'.fitOlga.'+avg+'.npz'
+                self.sig_zf = (self.rootdir+'/sig'+psig+conflim+'.z.'+self.config_tile.field+
+                      '.fitOlga.'+avg+'.npz')
+            else:
+                self.sig_Mzf = self.rootdir+'/sig'+psig+conflim+'.Mz.'+self.config_tile.field+'.MC.'+avg+'.mag90.npz'
+                self.sig_zf = (self.rootdir+'/sig'+psig+conflim+'.z.'+self.config_tile.field+
+                      '.MC.'+avg+'.mag90.Mlim'+str(np.round(self.config_tile.lgmass_lim,2))+'.npz')
+                
+            if Path(self.sig_Mzf).is_file() and Path(self.sig_zf).is_file():
+                sig_Mz[i] = np.load(self.sig_Mzf)['sig']
+                sig_z[i] = np.load(self.sig_zf)['sig']
+                sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
+                sig_z[i] = np.maximum(0.01, sig_z[i])
+            else:
+                ### we don't care about uncertainty on sig_z,
+                ### so we can run only on 2 MC realisations of the PDFs
+                if fit_Olga:
+                    #sig_Mz[i], sig_z[i] = self.compute_sig_fitOlga(conflim,psig,avg)
+                    print('fit Olga -- this is done in each tile !')
+                else:
+                    sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,2)
+                    
+                sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
+                sig_z[i] = np.maximum(0.01, sig_z[i])
+                np.savez(self.sig_Mzf,sig=sig_Mz[i])
+                np.savez(self.sig_zf,sig=sig_z[i])
+                
+        #sigz68_Mz, sigM68_Mz, sigz95_Mz, sigM95_Mz = sig_Mz.flatten()
+        #sigz68_z, sigM68_z, sigz95_z, sigM95_z = sig_z.flatten()
+        sigz68_Mz, sigz95_Mz = sig_Mz#.flatten()
+        sigz68_z, sigz95_z = sig_z#.flatten()   
+
+
+        sigz0 = 0.01 ##backward compatibility
+            
+        return sigz68_Mz,sigz95_Mz,sigz68_z,sigz95_z,sigz0
+    
+    
+    def run_get_sig(self):
+        
+        self.config_tile.galcatfile = ( self.config_tile.datadir+
+                                       self.config_tile.field+
+                                       '/'+
+                                       self.config_tile.field+
+                                       '_for_release_'+
+                                       self.config_tile.release+
+                                        '.DETECTIFz.galcat.fits'
+                                      )
+        
+        
+        self.galcat = Table.read(self.config_tile.galcatfile)
+    
+        self.galcat.rename_columns([self.config_tile.z_l68_colname, 
+                                self.config_tile.z_u68_colname],
+                           ['z_l68', 
+                            'z_u68'])
+    
+        self.config_tile.galcat_mcfile = (self.config_tile.datadir+
+                                       self.config_tile.field+
+                                       '/samples/'+
+                                       self.config_tile.field+
+                                       '_for_release_'+
+                                       self.config_tile.release+
+                                        '.DETECTIFz.samples.fits'
+                                         )
+    
+        tMz = Table.read(self.config_tile.galcat_mcfile)
+        if not('lgM_samples' in tMz.colnames):
+                tMz['lgM_samples'] = np.repeat(self.galcat['Mass_median'], 
+                                                          self.config_tile.nMC).reshape((len(tMz), 
+                                                                                         self.config_tile.nMC))
+                self.has_lgM = False
+                
+                
+        zmc = tMz['Z_SAMPLES']
+        Mmc = tMz['lgM_samples']
+    
+        self.galcat_mc = np.stack([zmc,Mmc]).T
+                
+        
+        
+                ###get 1D PDFs (z and M)
+        self.zz = np.arange(self.config_tile.zmin_pdf, 
+                            self.config_tile.zmax_pdf+self.config_tile.pdz_dz, 
+                            self.config_tile.pdz_dz)
+        self.MM = np.arange(self.config_tile.Mmin_pdf, 
+                            self.config_tile.Mmax_pdf+self.config_tile.pdM_dM, 
+                            self.config_tile.pdM_dM)
+
+        
+        
+        
+        self.get_sig()
+    
+    
             
     def run_tiling(self):
         
+        self.run_get_sig()
+        
+        self.config_tile.galcatfile = ( self.config_tile.datadir+
+                                       self.config_tile.field+
+                                       '/'+
+                                       self.config_tile.field+
+                                       '_for_release_'+
+                                       self.config_tile.release+
+                                        '.DETECTIFz.galcat.fits'
+                                      )
+        
         galcat_main = Table.read(self.config_tile.galcatfile)
+        
+        ## before tiling, get sig_MC
+        #self.get_sig()
 
         for i, tile in enumerate(self.tiles):
             (rainf, rasup, 
@@ -239,9 +449,30 @@ class Tiles(object):
             
             tile.galcat = galcat_main[maskgal_tile]
             #tile.galcat_raw_filename = 'tile'
-            if self.config_tile.Mz_MC_exists:
-                tile.Mz_MC = np.load(self.config_tile.Mz_MC_file)['Mz'][maskgal_tile]
-
+            #if self.config_tile.Mz_MC_exists:
+                
+            self.config_tile.Mz_MC_file = ( self.config_tile.datadir+
+                                       self.config_tile.field+
+                                       '/samples/'+
+                                       self.config_tile.field+
+                                       '_for_release_'+
+                                       self.config_tile.release+
+                                        '.DETECTIFz.samples.fits'
+                                      )
+            ### for tests    
+            #tile.Mz_MC = Table(np.moveaxis(
+            #    np.load(self.config_tile.Mz_MC_file)['Mz'][maskgal_tile],
+            #    2,
+            #    1),
+            #                   names=['lgM_samples', 'z_samples'])
+            ##final version should be :
+            tile.Mz_MC = Table.read(self.config_tile.Mz_MC_file)[maskgal_tile]
+            if not('lgM_samples' in tile.Mz_MC.colnames):
+                #tile.Mz_MC['lgM_samples'] = -99 * np.ones((len(tile.Mz_MC), self.config_tile.nMC))
+                tile.Mz_MC['lgM_samples'] = np.repeat(tile.galcat['Mass_median'], 
+                                               self.config_tile.nMC).reshape(
+                    (len(tile.Mz_MC), self.config_tile.nMC))
+                
             tile.thistile_dir = tile.tilesdir+'/tile'+'{:04d}'.format(tile.id)
             tile.master_masksfile = self.config_tile.masksfile
             tile.pixdeg = self.config_tile.pixdeg
@@ -263,11 +494,11 @@ class Tiles(object):
             tile.galcat_filename = tile.thistile_dir+"/galaxies."+tile.field+".galcat.fits"
             tile.galcat.write(tile.galcat_filename, overwrite=True) 
             
-            if self.config_tile.Mz_MC_exists:
-                tile.Mz_MC_filename = ( tile.thistile_dir+"/galaxies."+tile.field+"."+
-                                       str(int(self.config_tile.nMC))+"MC.Mz.npz" )
-
-                np.savez(tile.Mz_MC_filename, Mz=tile.Mz_MC)
+            #if self.config_tile.Mz_MC_exists:
+            tile.Mz_MC_filename = ( tile.thistile_dir+"/galaxies."+tile.field+"."+
+                                       str(int(self.config_tile.nMC))+"MC.Mz.fits" )
+            
+            tile.Mz_MC.write(tile.Mz_MC_filename, overwrite=True)
             
             if self.config_tile.maskstype == 'ds9' :
                 tile.run_venice_pixelize()
@@ -276,14 +507,18 @@ class Tiles(object):
                 tile.run_cutout()
                 
             elif self.config_tile.maskstype == 'none' :
-                f = open(self.config_tile.rootdir+'/'+self.config_tile.field+'_data/none.reg', "w")
+                f = open(self.config_tile.datadir+
+                         self.config_tile.field+
+                         '/none.reg', "w")
                 f.write("# FILTER HSC-G\n")
                 f.write("wcs; fk5\n")
                 f.write("circle("+str(np.median(tile.galcat[self.config_tile.ra_colname]))+
                         ","+str(np.median(tile.galcat[self.config_tile.dec_colname]))+
                         ",0.00000001d)")
                 f.close()
-                self.master_masksfile = "none.reg"
+                tile.master_masksfile = (self.config_tile.datadir+
+                                         self.config_tile.field+
+                                         '/none.reg')
                 
                 tile.run_venice_pixelize()
                 
@@ -299,7 +534,16 @@ class Tiles(object):
                      border_width = tile.border_width,
                      field=tile.field,
                      tilesdir = tile.tilesdir)
-
+            
+            
+            process = subprocess.Popen(["cp", self.sig_Mzf, tile.thistile_dir])
+            process.wait()
+            result = process.communicate()
+            
+            process = subprocess.Popen(["cp", self.sig_zf, tile.thistile_dir])
+            process.wait()
+            result = process.communicate()
+            
             
 #        
 #        ###DETECTIFz CONFIG FILE

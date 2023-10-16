@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os, sys
 import re
 import time
@@ -14,8 +16,6 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("-c","--config", type=str,
                     help = "Configuration file")
-parser.add_argument("-t", "--tile", type=str,
-                    help = "tile id")
 parser.add_argument("-q", "--quiet", help = "Suppress extra outputs",
                     action = "store_true")
 
@@ -39,11 +39,11 @@ except:
     raise
     
 #config.t = args.t
-print(args.tile)
+#print(args.tile)
     
 print('')    
 print('PREPARE DATA')
-d = data.Data(config=config, tile_id=args.tile)
+d = data.Data(config=config, tile_id='none')
 print('')
 
 print('SET UP DETECTIFz')

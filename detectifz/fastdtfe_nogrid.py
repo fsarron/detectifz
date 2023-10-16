@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
 
 import numpy as np
 import numba as nb
@@ -71,27 +74,27 @@ def densities3d(tri, the_pool, volumes):
     return np.array(dens)
 
 
-@nb.njit()
-def get_one_smooth(d, indices, indptr):
-    npoints = len(d)
-    dsmooth = np.zeros(npoints)
-    for vert in range(npoints):
-        dsmooth[vert] = np.mean(
-        d[indptr[indices[vert]:indices[vert+1]]])   
-    return dsmooth
-
-
 #@nb.njit()
 #def get_one_smooth(d, indices, indptr):
 #    npoints = len(d)
 #    dsmooth = np.zeros(npoints)
 #    for vert in range(npoints):
-#        if len(d[indptr[indices[vert]:indices[vert+1]]]) > 0:
-#            dsmooth[vert] = np.mean(
-#                d[indptr[indices[vert]:indices[vert+1]]])   
-#        else:
-#            dsmooth[vert] = d[vert]
+#        dsmooth[vert] = np.mean(
+#        d[indptr[indices[vert]:indices[vert+1]]])   
 #    return dsmooth
+
+
+@nb.njit()
+def get_one_smooth(d, indices, indptr):
+    npoints = len(d)
+    dsmooth = np.zeros(npoints)
+    for vert in range(npoints):
+        if len(d[indptr[indices[vert]:indices[vert+1]]]) > 0:
+            dsmooth[vert] = np.mean(
+                d[indptr[indices[vert]:indices[vert+1]]])   
+        else:
+            dsmooth[vert] = d[vert]
+    return dsmooth
 
 @nb.njit()
 def compute_dsmooth(d, indices, indptr, nsmooth):

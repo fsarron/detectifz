@@ -175,6 +175,9 @@ def clus_pdz_im3d(detectifz, smooth):
         )
 
         aper_data[:, ~aper_masks.data.astype(bool)] = np.nan
+        
+        print('SHAPES', pdzclus[indc, izi_im3d:izs_im3d].shape, len(detectifz.im3d))
+        
         pdzclus[indc, izi_im3d:izs_im3d] = (
             10 ** np.nanmean(aper_data, axis=(1, 2)) - 1
         )  # dgal

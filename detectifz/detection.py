@@ -1,7 +1,13 @@
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+
 import numpy as np
-import ray
+#import ray
 import psutil
 import time
+
+from joblib import Parallel, delayed
 
 import astropy.stats
 from astropy import wcs
@@ -18,7 +24,7 @@ from .utils import angsep_radius, physep_ang
 __all__ = ["det_photutils", "detection"]
 
 
-@ray.remote(max_calls=10)
+#@ray.remote(max_calls=10)
 def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, head):
     """Detects regions above a given signal-to-noise in a 2D map.
 
@@ -291,9 +297,10 @@ def detection(detectifz):
     nprocs: int, number of processes for parallelization with ray        
     """
 
+    
     memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
     mem_avail = 10*1024**3 #psutil.virtual_memory().available
-
+    '''
     if memo < 0.9 * mem_avail:
         memo_obj = int(0.9 * memo)
         #memo_heap = memo - memo_obj
@@ -322,6 +329,21 @@ def detection(detectifz):
     else:
         raise ValueError("Not enough memory available : ",
                          memo, "<", mem_avail)
+    '''
+    centre, zinf, zsup = detectifz.zslices.T 
+
+    detect_all = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
+        delayed(det_photutils)(detectifz.config.SNmin, 
+                               l, 
+                                centre,
+                                zinf, 
+                                zsup, 
+                                detectifz.im3d, 
+                                detectifz.weights2d, 
+                                detectifz.head2d
+                                )
+                for l in range(len(centre))))
+
 
     # remove slices with no det from the list
     ddet = []

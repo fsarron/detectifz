@@ -1,7 +1,7 @@
 import numpy as np
 import astropy.cosmology
 from astropy import units
-from pinky import Pinky
+#from pinky import Pinky
 import ray
 import numba as nb
 from scipy.spatial.transform import Rotation

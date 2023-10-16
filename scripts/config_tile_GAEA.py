@@ -1,6 +1,6 @@
 rootdir = '/Volumes/Expansion/lance_detectifz/GAEA/GAEA_ECLQ'
 field = 'GAEA_ECLQ'
-tilesdir = rootdir+'/'+field+'_DETECTIFzrun' 
+tilesdir = rootdir+'/'+field+'_DETECTIFzrun'
 
 galcatfile = rootdir+'/'+field+'_data/GAEA_ECLQ_SDR3_DDP_for_DETECTIFz.fits'
 

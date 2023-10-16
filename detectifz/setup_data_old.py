@@ -24,14 +24,14 @@ from astropy import wcs
 import subprocess
 
 
-#@nb.njit(parallel=True)
+@nb.njit(parallel=True)
 def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NMmax, 
                     idx_lgmass_lim, quantile, Nmc):
     mask_Mlim = (binM_MC >= idx_lgmass_lim)
     sig_Mz = np.zeros((Nz,NM))
     sig_z = np.zeros(Nz)
     for iz in nb.prange(Nzmin, Nzmax):
-        for iMC in range(Nmc):
+        for iMC in nb.prange(Nmc):
             mask_z = (binz_MC[iMC] == iz)
             m = mask_z & mask_Mlim[iMC]
             s = sig_indiv[m]
@@ -39,7 +39,7 @@ def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NM
                 sig_z[iz] = np.quantile(s, quantile)
             except:
                 continue
-            for jM in range(NMmin, NMmax):
+            for jM in nb.prange(NMmin, NMmax):
                 mask_M = (binM_MC[iMC] == jM)
                 m = mask_z & mask_M
                 s = sig_indiv[m]
@@ -64,11 +64,18 @@ class Data(object):
         print(self.rootdir)
         self.Nmc = config.Nmc
         self.lgmass_lim = config.lgmass_lim
-        print(self.lgmass_lim)
         self.masksfile_radec = self.rootdir+'/masks.'+self.field+'.radec.fits'
         self.masksfile = self.rootdir+'/masks.'+self.field+'.radec.fits'   ## to modify for coord cahnge of masks
+
+        self.pdf_Mz = config.pdf_Mz
         
-        self.tile_id = tile_id        
+        
+        self.tile_id = tile_id
+        Mz_MC_exists, pdz_datatype, pdM_datatype= config.datatypes
+        
+        self.Mz_MC_exists = Mz_MC_exists
+        self.pdz_datatype = pdz_datatype
+        self.pdM_datatype = pdM_datatype
         
         ## get maglim mask
         self.get_galcat()
@@ -76,12 +83,30 @@ class Data(object):
         ###get 1D PDFs (z and M)
         self.zz = np.arange(config.zmin_pdf, config.zmax_pdf+config.pdz_dz, config.pdz_dz)
         self.MM = np.arange(config.Mmin_pdf, config.Mmax_pdf+config.pdM_dM, config.pdM_dM)
-
         
-        galcat_mc, xyminmax = self.get_data_detectifz()
+        print('get 1D PDFs')
+        print('photo-z ...')
+        self.pdz = self.get_pdf('z')
+        print('stellar-mass ...')
+        self.pdM = self.get_pdf('M')  
+        
+        ### get the Nmc MC samples (M, z) -- if they do not exists, get z_MC and M_MC separately.
+        #### FOR QUANTILES AND TPNORM, use native ampling funtions rather than rv_histogram ?
+        #### Should be the same for tpnorm. For QUANTILES it is different.
+        ### I think from some tests on realistic PDF(z) that 
+        #### qp.quant distribution rvs function return wrong results.
+        ### --> SO I CAN JUST USE rv_histogram().rvs() for all datatypes here !
+        #print('sample (M,z)')
+        #self.Mz = self.sample_pdf()
+        
+        galcat_mc, zz, pdz, MM, pdM, xyminmax = self.get_data_detectifz()
         #self.galcat = galcat
         self.galcat_mc = galcat_mc
         self.galcat_mc_master = np.vstack(self.galcat_mc)
+        self.zz = zz
+        self.MM = MM
+        self.pdz = pdz
+        self.pdM = pdM
         self.xyminmax = xyminmax
         
         self.masks = self.get_masks()
@@ -107,31 +132,23 @@ class Data(object):
                             self.config.obsmag_colname],
                            ['id',
                             'ra_original','dec_original',
-                            #'ra','dec',
                             'z', 'z_l68', 'z_u68',
                            'Mass_median','Mass_l68','Mass_u68',
                            'obsmag'])
         
-        try: # self.config.obsmag_lim is None:
-            self.obsmag_lim = self.config.obsmag_lim
-        except:
-            try:
-                h, bin_edges = np.histogram(gal['obsmag'], bins = np.arange(10,30,0.1))
-                self.obsmag_lim = bin_edges[np.argmax(h)-1]                
-            except:
-                raise ValueError('obsmag_lim not defined and could not be computed from galaxy catalogue')
+        if self.config.obsmag90 is None:
+            h, bin_edges = np.histogram(gal['obsmag'], bins = np.arange(10,30,0.1))
+            self.obsmag90 = bin_edges[np.argmax(h)-1]
+        else:
+            self.obsmag90 = self.config.obsmag90
         #m90 = 22.
-        self.mask_mlim = gal['obsmag'] < self.obsmag_lim
-        self.galcat = gal[self.mask_mlim]
+        self.mask_m90 = gal['obsmag'] < self.obsmag90
+        self.galcat = gal[self.mask_m90]
         
         ## TO DO -- coord_change that then works with mask
         self.skycoords_center = SkyCoord(ra = np.median(self.galcat['ra_original']), 
                                                         dec = np.median(self.galcat['dec_original']), unit='deg', frame='fk5')
          
-        np.savez(self.rootdir+'skycoords_center.npz', 
-                 ra=self.skycoords_center.ra.value, 
-                 dec=self.skycoords_center.dec.value)
-            
         skycoords_galaxies  = SkyCoord(ra = self.galcat['ra_original'], 
                                                         dec = self.galcat['dec_original'], unit='deg', frame='fk5')
          
@@ -148,48 +165,164 @@ class Data(object):
         Save an array containing the 100 MC galaxy catalogues with (id,ra,dec,z,M*) to .npz file
         '''
                 
-        Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.fits'
-        Mzf_masked =  self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.masked_m90.fits'
+        Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.npz'
+        Mzf_masked =  self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.masked_m90.npz'
         #print(Mzf)
         if Path(Mzf_masked).is_file():
             print('samples already saved, we read it')
-            #Mz_t = np.load(Mzf_masked)['Mz']
-            tMz = Table.read(Mzf_masked)
-            if not('lgM_samples' in tMz.colnames):
-                #tMz['lgM_samples'] = -99 * np.ones((len(t_Mz), self.Nmc))
-                tMz['lgM_samples'] = np.repeat(self.galcat['Mass_median'], 
-                                               self.Nmc).reshape((len(t_Mz), self.Nmc))
-                self.has_lgM = False
+            Mz = np.load(Mzf_masked)['Mz']
         elif Path(Mzf).is_file() and not(Path(Mzf_masked).is_file()):
             print('samples already saved, we read it')
-            #Mz = np.load(Mzf)['Mz'][self.mask_mlim]
-            tMz = Table.read(Mzf)[self.mask_mlim]
-            if not('lgM_samples' in tMz.colnames):
-                #tMz['lgM_samples'] = -99 * np.ones((len(t_Mz), self.Nmc))
-                tMz['lgM_samples'] = np.repeat(self.galcat['Mass_median'][self.mask_mlim], 
-                                               self.Nmc).reshape((len(t_Mz), self.Nmc))
-                self.has_lgM = False
+            Mz = np.load(Mzf)['Mz'][self.mask_m90]
         else:    
             print('sample (M,z)...')
             Mz = self.sample_pdf()
-            tMz = Table(np.moveaxis(Mz, 2, 1), names=['lgM_samples', 'Z_SAMPLES'])
-            tMz.write(Mzf_masked)
-            #np.savez(Mzf_masked,Mz=Mz)
-            #Mz = Mz[self.mask_mlim]
+            np.savez(Mzf_masked,Mz=Mz)
+            #Mz = Mz[self.mask_m90]
         
+        pdz_file_masked = self.rootdir+'/galaxies.'+self.field+'.pdz.masked_m90.npz'
+        if Path(pdz_file_masked).is_file():
+            pdz = np.load(pdz_file_masked)['pz']
+            zz = np.load(pdz_file_masked)['z']
+        else:
+            pdz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['pz'][self.mask_m90]
+            zz = np.load(self.rootdir+'/galaxies.'+self.field+'.pdz.npz')['z']
+        
+        pdM_file_masked = self.rootdir+'/galaxies.'+self.field+'.pdM.masked_m90.npz'
+        if Path(pdM_file_masked).is_file():
+            pdM = np.load(pdM_file_masked)['pM']
+            MM = np.load(pdM_file_masked)['M']
+        else:
+            pdM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['pM'][self.mask_m90]
+            MM = np.load(self.rootdir+'/galaxies.'+self.field+'.pdM.npz')['M']
+
+        #pdM_file_masked = self.rootdir+'/galaxies.'+self.field+'.pd
+        #zz = np.linspace(0.01,5,500)
+        #MM = np.linspace(5.025,12.975,160)
         
         idmc = np.repeat(np.array(self.galcat['id']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         ramc = np.repeat(np.array(self.galcat['ra']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         decmc = np.repeat(np.array(self.galcat['dec']),self.Nmc).reshape(len(self.galcat),self.Nmc)
-        zmc = tMz['Z_SAMPLES']
-        Mmc = tMz['lgM_samples']
+        zmc = Mz[:,:,1]
+        Mmc = Mz[:,:,0]
     
-        galmc = np.stack([idmc,ramc,decmc,zmc,Mmc]).T
+        galmc = np.stack([idmc,ramc,decmc,zmc,Mmc,]).T
         
         xyminmax = np.array([self.galcat['ra'].min(),self.galcat['ra'].max(),
                              self.galcat['dec'].min(),self.galcat['dec'].max()])
     
-        return galmc, xyminmax
+        return galmc, zz, pdz, MM, pdM, xyminmax
+    
+    
+    def get_pdf(self, param):
+        
+        if param == 'z':
+            datatype = self.pdz_datatype
+            xx = self.zz
+        if param == 'M':
+            datatype = self.pdM_datatype
+            xx = self.MM
+
+        pdf_fname = 'pd'+param
+        pdf_name = 'p'+param
+        samples_fname = 'samples_'+param
+        quantiles_fname = 'quantiles_'+param
+        tp_fname = 'tpnorm_'+param
+
+        print(self.rootdir)
+
+        if datatype == 'PDF' or Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file():
+            ## we just have to read the file
+            print('read the .npz file ...')
+            pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[pdf_name][self.mask_m90]
+            x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz')[param]
+            ## we should add a check that pdf and xx have the same sampling, 
+            ## allowing for round off differences
+            if np.all( np.round(x, 3) != np.round(xx, 3) ):
+                raise ValueError('sampling indicated in config.py for '+param+
+                             'differs from the one from the PDF file')
+                
+        elif Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz').is_file():
+            pdf = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz')[pdf_name]
+            x = np.load(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz')[param]
+            ## we should add a check that pdf and xx have the same sampling, 
+            ## allowing for round off differences
+            if np.all( np.round(x, 3) != np.round(xx, 3) ):
+                raise ValueError('sampling indicated in config.py for '+param+
+                             'differs from the one from the PDF file')
+        
+        elif ( datatype == 'samples' and 
+            not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
+            ### do KDE estimate
+            print('KDE estimate...')
+            if self.Mz_MC_exists:
+                if param == 'z':
+                    dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+
+                                      str(self.Nmc)+'MC.Mz.npz')['Mz'][self.mask_m90, :, 1]
+                if param == 'M':
+                    dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+
+                                      str(self.Nmc)+'MC.Mz.npz')['Mz'][self.mask_m90, :, 0]
+            else:
+                dataset = np.load(self.rootdir+'/galaxies.'+self.field+'.'+samples_fname+'.npz')['samples'][self.mask_m90]
+            #pdf = np.array([scipy.stats.gaussian_kde(dataset[i])(xx) for i in range(len(dataset))])
+            pdf = numba_loop_kde(xx, dataset)
+            if param == 'z':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pz=pdf, z=xx)
+            if param == 'M':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pM=pdf, M=xx)
+        
+        elif ( datatype == 'quantiles' and 
+            not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
+            ## use qp to approxiamte PDF
+            print('run qp estimate...')
+            quantiles_def = np.load(self.rootdir+'/galaxies.'+self.field+'.'+quantiles_fname+'.npz')['quantiles_def']
+            quantiles = np.load(self.rootdir+'/galaxies.'+self.field+'.'+quantiles_fname+'.npz')['quantiles'][self.mask_m90]
+            dist = qp.stats.quant(quants=quantiles_def, locs=quantiles)
+            pdf = dist.pdf(zz)        
+        
+        elif ( datatype == 'tpnorm' and 
+            not( Path(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.npz').is_file() ) ):
+            ### two piece normal PDF for l68, u68
+            print('compute two piece normal...')
+            #med = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['med']
+            #l68 = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['l68']
+            #u68 = np.load(self.rootdir+'/galaxies.'+self.field+'.'+tp_fname+'.npz')['u68']
+            tab = Table.read(self.rootdir+'/galaxies.'+self.field+'.galcat.fits')[self.mask_m90]
+            
+            if param == 'z':
+                med = np.array(tab[self.config.z_med_colname])
+                l68 = np.array(tab[self.config.z_l68_colname])
+                u68 = np.array(tab[self.config.z_u68_colname])
+                
+            if param == 'M':
+                med = np.array(tab[self.config.M_med_colname])
+                l68 = np.array(tab[self.config.M_l68_colname])
+                u68 = np.array(tab[self.config.M_u68_colname])
+                
+            #sig_l68 = np.maximum(0.01, sig_l68)
+            #sig_u68 = np.maximum(0.01, sig_u68)
+            sig_l68 = np.maximum(0.01, med - l68)
+            sig_u68 = np.maximum(0.01, u68 - med)
+            
+            pdf = np.array([tpnorm(loc=med[i], 
+                                 sigma1=sig_l68[i], 
+                                 sigma2=sig_u68[i]).pdf(xx) 
+                          for i in range(len(med))])
+            if param == 'z':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pz=pdf, z=xx)
+            if param == 'M':
+                np.savez(self.rootdir+'/galaxies.'+self.field+'.'+pdf_fname+'.masked_m90.npz', 
+                         pM=pdf, M=xx)
+                           
+        else:
+            raise ValueError('wrong value for PDF_z_datatype keyword in config.py.'+
+                             ' Should be "PDF", "samples", "quantiles" or "tpnorm"')
+
+        return pdf
+
 
 
     def get_masks(self):
@@ -384,23 +517,17 @@ class Data(object):
     
     def get_sig(self):
         
-        avg,nprocs,fit_Olga = self.config.avg, self.config.nprocs, self.config.fit_Olga
+        avg,nprocs = self.config.avg,self.config.nprocs
     
         sig_Mz = np.empty(2,dtype='object')
         sig_z = np.empty(2,dtype='object')
 
         psig='z'
-        for i,conflim in enumerate([self.config.conflim_1sig]):
+        for i,conflim in enumerate(['68']):
             #for j,psig in enumerate(['z']): #,'Mass']):
-            if fit_Olga:
-                sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.fitOlga.'+avg+'.npz'
-                sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
-                      '.fitOlga.'+avg+'.npz')
-            else:
-                sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.MC.'+avg+'.mag90.npz'
-                sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
+            sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.MC.'+avg+'.mag90.npz'
+            sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
                       '.MC.'+avg+'.mag90.Mlim'+str(np.round(self.config.lgmass_lim,2))+'.npz')
-                
             if Path(sig_Mzf).is_file() and Path(sig_zf).is_file():
                 sig_Mz[i] = np.load(sig_Mzf)['sig']
                 sig_z[i] = np.load(sig_zf)['sig']
@@ -409,11 +536,7 @@ class Data(object):
             else:
                 ### we don't care about uncertainty on sig_z,
                 ### so we can run only on 2 MC realisations of the PDFs
-                if fit_Olga:
-                    sig_Mz[i], sig_z[i] = self.compute_sig_fitOlga(conflim,psig,avg)
-                else:
-                    sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,2)
-                    
+                sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,2)
                 sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
                 sig_z[i] = np.maximum(0.01, sig_z[i])
                 np.savez(sig_Mzf,sig=sig_Mz[i])
@@ -431,35 +554,6 @@ class Data(object):
         return sigz68_Mz,sigz95_Mz,sigz68_z,sigz95_z,sigz0
     
 
-    
-    def compute_sig_fitOlga(self,conflim,psig,avg):
-        
-        if self.config.selection == 'maglim':
-            t = Table.read(self.config.fitdir_Olga+
-                           '/fit_dz_'+
-                           self.config.field+'_'+
-                           self.config.release+'.txt', 
-                           format='ascii.commented_header')
-            LIMIT=self.config.obsmag_lim
-            
-        elif self.config.selection == 'masslim':
-            t = Table.read(self.config.fitdir_Olga+
-                           '/fit_dz_'+
-                           self.config.field+'_'+
-                           self.config.release+'_logSM.txt', 
-                           format='ascii.commented_header') 
-            LIMIT=self.config.lgmass_lim
-
-        sig_z = (t[t['LIMIT'] ==  LIMIT]['A[0]'] +
-                   t[t['LIMIT'] ==  LIMIT]['A[1]'] * self.zz +
-                   t[t['LIMIT'] ==  LIMIT]['A[2]'] * self.zz**2 +
-                   t[t['LIMIT'] ==  LIMIT]['A[3]'] * self.zz**3 +
-                   t[t['LIMIT'] ==  LIMIT]['A[4]'] * self.zz**4)
-        
-        sig_Mz = -99*np.ones((len(self.zz), len(self.MM)))
-        
-        return sig_Mz, sig_z
-    
     def compute_sig_MC(self,conflim,psig,avg,nprocs,Nmc):
         sig_indiv = np.array(0.5*(self.galcat[psig+'_u'+conflim]-self.galcat[psig+'_l'+conflim]))
         quantile = int(avg[:-1])*0.01
@@ -468,13 +562,14 @@ class Data(object):
         Nz = len(self.zz)
         zzbin = np.linspace(self.zz[0]-dz,self.zz[-1]+dz,Nz+1) 
         binz_MC = np.digitize(self.galcat_mc[:Nmc,:,3],zzbin)-1
-                
+        
         dM = 0.5*np.diff(self.MM)[0]
         NM = len(self.MM)
-        MMbin = np.linspace(self.MM[0]-dM,self.MM[-1]+dM,NM+1)        
-        binM_MC = np.digitize(self.galcat_mc[:Nmc,:,4],MMbin)-1  
+        MMbin = np.linspace(self.MM[0]-dM,self.MM[-1]+dM,NM+1)
+        binM_MC = np.digitize(self.galcat_mc[:Nmc,:,4],MMbin)-1    
         
         idx_lgmass_lim = np.digitize(self.lgmass_lim,MMbin)-1
+        
         
         Nzmax = int(min(Nz, ((self.config.zmax + 0.1*(1+self.config.zmax)) / (2*dz))))
         Nzmin = int(max(0, ((self.config.zmin - 0.1*(1+self.config.zmin)) / (2*dz))))
@@ -505,7 +600,7 @@ class Data(object):
         
         logMlimz = np.zeros(len(self.zz))
 
-        logMlim = self.galcat['Mass_median'] + 0.4 * (self.galcat['obsmag'] - self.obsmag_lim)
+        logMlim = self.galcat['Mass_median'] + 0.4 * (self.galcat['obsmag'] - self.obsmag90)
         
         for iz,z in enumerate(self.zz):
             zlims = ( (self.galcat['z'] > z-self.sigs.sigz68_z[iz]) & 
@@ -514,9 +609,6 @@ class Data(object):
                 logMlimz[iz] = np.quantile(logMlim[zlims][self.galcat['obsmag'][zlims] > 
                                         np.quantile(self.galcat['obsmag'][zlims],0.8)],self.config.lgmass_comp)
             except:
-                logMlimz[iz] = -99
-                
-            if self.config.fit_Olga:
                 logMlimz[iz] = -99
             
         self.logMlim90 = scipy.interpolate.interp1d(self.zz, logMlimz)
