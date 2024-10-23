@@ -1,4 +1,5 @@
 name: detectifz
+description: "DETECTIFz is a galaxy group finder algorithm that detectects groups in multiband photometric galaxy surveys."
 channels:
   - conda-forge
   - defaults
