@@ -273,6 +273,30 @@ def numba_loop_kde(eval_points, samples):
     return result
 
 
+def celestial_rectangle_area(ra1, dec1, ra2, dec2):
+    """
+    Calculate the area of a rectangle on the celestial sphere.
+    ra1, dec1: coordinates of the bottom-left corner
+    ra2, dec2: coordinates of the top-right corner
+    Returns area in square degrees.
+    """
+    # Convert RA/Dec to radians
+    ra1_rad, dec1_rad = np.radians(ra1), np.radians(dec1)
+    ra2_rad, dec2_rad = np.radians(ra2), np.radians(dec2)
+
+    # Compute the differences in RA and Dec
+    delta_ra = ra2 - ra1 # Difference in RA (radians)
+    delta_sin_dec = np.sin(dec2_rad) - np.sin(dec1_rad)  # Difference in sin(Dec)
+
+    # Area of the rectangle (in steradians)
+    area_steradians = np.abs(delta_ra * delta_sin_dec)
+
+    # Convert area to square degrees
+    area_degrees = np.degrees(area_steradians)
+    return area_degrees
+
+
+
 
 
 # REFINE specific

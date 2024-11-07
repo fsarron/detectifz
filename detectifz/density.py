@@ -587,66 +587,6 @@ def get_dmap(detectifz):
 
 
         start = time.time()
-        
-        '''
-        memo = 10*1024**3 #1.5 * (len(zslices) * xsize * ysize * 8)
-        mem_avail = 20*1024**3 #psutil.virtual_memory().available
-        if memo < 0.9 * mem_avail:
-            memo_obj = int(0.9 * memo)
-            ray.init(
-                num_cpus=int(1 * detectifz.config.nprocs),
-                object_store_memory=memo_obj,
-                ignore_reinit_error=False,
-                log_to_driver=True,
-                include_dashboard=False
-            )
-            
-            galmc_Mlim_id = ray.put(galmc_Mlim)
-            zslices_id = ray.put(zslices)
-            map_params = [xsize, ysize, xminmax, yminmax, pixdeg.value]
-            im3d_mass = np.array(
-                ray.get(
-                    [
-                        get_dtfemc.remote(
-                            islice,
-                            zslices_id,
-                            galmc_Mlim_id,
-                            Nmc,
-                            map_params,
-                            masks,
-                            headmap,
-                        )
-                        for islice in range(len(zslices))
-                    ]
-                )
-            )
-            
-            galmc_id = ray.put(detectifz.data.galcat_mc)
-            maskMlim_mc_id =  ray.put(detectifz.maskMlim_mc)
-            zslices_id = ray.put(detectifz.zslices)
-            map_params = [xsize, ysize, xminmax, yminmax, detectifz.config.pixdeg]
-            im3d_mass = np.array(
-                ray.get(
-                    [
-                        get_dtfemc_nogrid.remote(
-                            islice, 
-                            zslices_id, 
-                            galmc_id, 
-                            maskMlim_mc_id, 
-                            detectifz.config.Nmc, 
-                            map_params, 
-                            masks, 
-                            headmap
-                        )
-                        for islice in range(len(detectifz.zslices))
-                    ]
-                )
-            )
-            ray.shutdown()
-        else:
-            raise ValueError("Not enough memory available : ", memo, "<", mem_avail)
-        else:
-        '''
              
         im3d_mass = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
             delayed(get_dtfemc_nogrid)(
@@ -663,30 +603,6 @@ def get_dmap(detectifz):
 
         end = time.time()
         print("total time DTFE (s)= " + str(end - start))
-        
-        #islices, im3d_mass = res.T
-        
-        #for islice in islices:
-        #    print(islice)
-        
-        
-        '''
-        # write 3d image
-        centre, zinf, zsup = detectifz.zslices[:, 0], detectifz.zslices[:, 1], detectifz.zslices[:, 2]
-        w2d = wcs.WCS(headmap)
-        hdu = fits.PrimaryHDU(im3d_mass)
-        w3d = wcs.WCS(hdu.header)
-        w3d.wcs.ctype = ["RA---TAN", "DEC--TAN", "z"]
-        w3d.wcs.crval = [w2d.wcs.crval[0], w2d.wcs.crval[1], centre[0]]
-        w3d.wcs.crpix = [1, 1, 1]
-        w3d.wcs.cdelt = [w2d.wcs.cdelt[0], w2d.wcs.cdelt[1], 0.01]
-        hdu = fits.PrimaryHDU(im3d_mass, header=w3d.to_header())
-        hdu.writeto(imf, overwrite=True)
-        hdu = fits.PrimaryHDU(masks.astype(int), header=headmap)
-        hdu.writeto(wf, overwrite=True)
-        '''
-        
-        
 
         # convolution with 1D normal of sigma=dzmap in redshift space (remove high freq variations)
         nans, x = nan_helper(im3d_mass)  # interpolate nans

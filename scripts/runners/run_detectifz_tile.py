@@ -11,6 +11,7 @@ import detectifz.detectifz as detectifz
 #import detectifz as dfz
 #print(dfz.__path__)
 
+
 import argparse
 import configparser
 
@@ -20,6 +21,8 @@ from pydantic import validate_arguments
 @validate_arguments
 @dataclass
 class ConfigDetectifz:
+    detection_type: str
+    
     obsmag_lim: float
     lgmass_comp: float
     lgmass_lim: float
@@ -64,24 +67,22 @@ class ConfigDetectifz:
     rootdir: str
 
 
-
 parser = argparse.ArgumentParser()
-
 parser.add_argument("-c","--configuration", type=str,
                     help = "Configuration file")
-parser.add_argument("-q", "--quiet", help = "Suppress extra outputs",
-                    action = "store_true")
+parser.add_argument("-t", "--tile", type=str,
+                    help = "tile id")
 
 args = parser.parse_args()
-quiet = args.quiet
 
 os.system('pwd')
 
-
-    
 #config.t = args.t
-#print(args.tile)
+print(args.tile)
 
+
+print('')
+print('read config')
 
 config = configparser.ConfigParser()
 config.read(args.configuration)
@@ -91,11 +92,19 @@ config_detectifz = ConfigDetectifz(*[config['DETECTIFz'][f]
 
 print('')    
 print('PREPARE DATA')
-d = data.Data(config=config_detectifz, tile_id='none')
+d = data.Data(config=config_detectifz, tile_id=args.tile)
 print('')
-
 
 print('SET UP DETECTIFz')
 detect = detectifz.DETECTIFz(config_detectifz.field, data=d, config=config_detectifz)
-detect.run()
+detect.run_main()
+
+
+## curently broken functions 
+## (worked on the legacy 2021 version, but you need grids of P(M, z) for each gal
+## (please contact the author if you have such data and need to make it work)
+#
+# Hopefully a next version will make them work from MC samples of P(M, z).
+# 
+#detect.run_R200()  
 #detect.run_Pmem()

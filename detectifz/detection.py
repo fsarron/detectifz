@@ -25,7 +25,7 @@ __all__ = ["det_photutils", "detection"]
 
 
 #@ray.remote(max_calls=10)
-def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, head):
+def det_photutils(detection_type, SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, head):
     """Detects regions above a given signal-to-noise in a 2D map.
 
     Parameters
@@ -54,15 +54,20 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
 
     # define min group area as disk of r=0.25Mpc in number of pixels
     w = wcs.WCS(head)
-    #rmin = angsep_radius(zslice, 0.25)
-    rmin = angsep_radius(zslice, 0.5 / (1 + zslice)) #in comoving Mpc for Qiong
+    
+    if detection_type == 'groups':
+        rmin = angsep_radius(zslice, 0.25)
+    elif detection_type == 'protoclusters':
+        rmin = angsep_radius(zslice, 0.5 / (1 + zslice)) #in comoving Mpc for Qiong
 
     min_area_deg = np.pi * rmin ** 2
 
     dpix = w.wcs.cdelt[0] * w.wcs.cdelt[1]
     min_area = min_area_deg.value / dpix
-    #max_area = np.pi * angsep_radius(zslice, 10 ).value / dpix
-    max_area = np.pi * angsep_radius(zslice, 10  / (1 + zslice)).value / dpix #in comoving Mpc for Qiong
+    if detection_type == 'groups':
+        max_area = np.pi * angsep_radius(zslice, 10 ).value / dpix
+    elif  detection_type == 'protoclusters':
+        max_area = np.pi * angsep_radius(zslice, 10  / (1 + zslice)).value / dpix #in comoving Mpc for Qiong
 
     # compute mean and dispersion of wlog_dgal
     # mud = np.nanmean(log_dgal_s[~weights])
@@ -322,43 +327,12 @@ def detection(detectifz):
     nprocs: int, number of processes for parallelization with ray        
     """
 
-    
-    memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
-    mem_avail = 10*1024**3 #psutil.virtual_memory().available
-    '''
-    if memo < 0.9 * mem_avail:
-        memo_obj = int(0.9 * memo)
-        #memo_heap = memo - memo_obj
-        ray.init(
-            num_cpus=detectifz.config.nprocs,
-            object_store_memory=memo_obj,
-            ignore_reinit_error=True,
-            log_to_driver=False,
-        )
-        im3d_id = ray.put(detectifz.im3d)
-        weights_id = ray.put(detectifz.weights2d)
-        centre, zinf, zsup = detectifz.zslices.T 
-        centre_id = ray.put(centre)
-        zinf_id = ray.put(zinf)
-        zsup_id = ray.put(zsup)
 
-        detect_all = ray.get(
-            [
-                det_photutils.remote(
-                    detectifz.config.SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, detectifz.head2d
-                )
-                for l in range(len(centre))
-            ]
-        )
-        ray.shutdown()
-    else:
-        raise ValueError("Not enough memory available : ",
-                         memo, "<", mem_avail)
-    '''
     centre, zinf, zsup = detectifz.zslices.T 
 
     detect_all = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
-        delayed(det_photutils)(detectifz.config.SNmin, 
+        delayed(det_photutils)(detectifz.config.detection_type,
+                                detectifz.config.SNmin, 
                                l, 
                                 centre,
                                 zinf, 

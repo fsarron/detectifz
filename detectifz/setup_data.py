@@ -393,7 +393,7 @@ class Data(object):
     
     def get_sig(self):
         
-        avg,nprocs,fit_Olga = self.config.avg, self.config.nprocs, self.config.fit_Olga
+        avg,nprocs = self.config.avg, self.config.nprocs
     
         sig_Mz = np.empty(2,dtype='object')
         sig_z = np.empty(2,dtype='object')
@@ -401,15 +401,10 @@ class Data(object):
         psig='z'
         for i,conflim in enumerate([self.config.conflim_1sig]):
             #for j,psig in enumerate(['z']): #,'Mass']):
-            if fit_Olga:
-                sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.fitOlga.'+avg+'.npz'
-                sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
-                      '.fitOlga.'+avg+'.npz')
-            else:
-                sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.MC.'+avg+'.mag90.npz'
-                sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
-                      '.MC.'+avg+'.mag90.Mlim'+str(np.round(self.config.lgmass_lim,2))+'.npz')
-                
+            sig_Mzf = self.config.rootdir+'/sig'+psig+conflim+'.Mz.'+self.field+'.MC.'+avg+'.mag90.npz'
+            sig_zf = (self.config.rootdir+'/sig'+psig+conflim+'.z.'+self.field+
+                  '.MC.'+avg+'.mag90.Mlim'+str(np.round(self.config.lgmass_lim,2))+'.npz')
+
             if Path(sig_Mzf).is_file() and Path(sig_zf).is_file():
                 sig_Mz[i] = np.load(sig_Mzf)['sig']
                 sig_z[i] = np.load(sig_zf)['sig']
@@ -418,12 +413,9 @@ class Data(object):
             else:
                 ### we don't care about uncertainty on sig_z,
                 ### so we can run only on 2 MC realisations of the PDFs
-                if fit_Olga:
-                    sig_Mz[i], sig_z[i] = self.compute_sig_fitOlga(conflim,psig,avg)
-                else:
-                    sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,25)
-                    sig_Mz[i] = gaussian_filter1d(sig_Mz[i], 5, axis=0)
-                    sig_z[i] = gaussian_filter1d(sig_z[i], 5)
+                sig_Mz[i], sig_z[i] = self.compute_sig_MC(conflim,psig,avg,nprocs,25)
+                sig_Mz[i] = gaussian_filter1d(sig_Mz[i], 5, axis=0)
+                sig_z[i] = gaussian_filter1d(sig_z[i], 5)
                     
                 sig_Mz[i] = np.maximum(0.01, sig_Mz[i])
                 sig_z[i] = np.maximum(0.01, sig_z[i])
@@ -440,36 +432,6 @@ class Data(object):
         sigz0 = 0.01 ##backward compatibility
             
         return sigz68_Mz,sigz95_Mz,sigz68_z,sigz95_z,sigz0
-    
-
-    
-    def compute_sig_fitOlga(self,conflim,psig,avg):
-        
-        if self.config.selection == 'maglim':
-            t = Table.read(self.config.fitdir_Olga+
-                           '/fit_dz_'+
-                           self.config.field+'_'+
-                           self.config.release+'.txt', 
-                           format='ascii.commented_header')
-            LIMIT=self.config.obsmag_lim
-            
-        elif self.config.selection == 'masslim':
-            t = Table.read(self.config.fitdir_Olga+
-                           '/fit_dz_'+
-                           self.config.field+'_'+
-                           self.config.release+'_logSM.txt', 
-                           format='ascii.commented_header') 
-            LIMIT=self.config.lgmass_lim
-
-        sig_z = (t[t['LIMIT'] ==  LIMIT]['A[0]'] +
-                   t[t['LIMIT'] ==  LIMIT]['A[1]'] * self.zz +
-                   t[t['LIMIT'] ==  LIMIT]['A[2]'] * self.zz**2 +
-                   t[t['LIMIT'] ==  LIMIT]['A[3]'] * self.zz**3 +
-                   t[t['LIMIT'] ==  LIMIT]['A[4]'] * self.zz**4)
-        
-        sig_Mz = -99*np.ones((len(self.zz), len(self.MM)))
-        
-        return sig_Mz, sig_z
     
     def compute_sig_MC(self,conflim,psig,avg,nprocs,Nmc):
         sig_indiv = np.array(0.5*(self.galcat[psig+'_u'+conflim]-self.galcat[psig+'_l'+conflim]))
@@ -527,8 +489,6 @@ class Data(object):
             except:
                 logMlimz[iz] = -99
                 
-            if self.config.fit_Olga:
-                logMlimz[iz] = -99
             
         self.logMlim90 = scipy.interpolate.interp1d(self.zz, logMlimz)
                 

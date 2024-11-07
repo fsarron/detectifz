@@ -10,7 +10,7 @@ import h5py
 from pathlib import Path
 from astropy.io import fits
 import ray
-from . import density, detection, cleaning, r200, members, membership_Qiong
+from . import density, detection, cleaning, r200, members, membership_jwst
 from .tiling import Tile
 from .utils import Mlim_DETECTIFz
 from astropy import units
@@ -20,21 +20,8 @@ import time
 
 import warnings
 from astropy.utils.exceptions import AstropyWarning,AstropyUserWarning
-###missing many imports  
 
 warnings.filterwarnings("ignore")
-
-#def Mlim(field,masslim,z):
-#    if field == 'UDS' or field == 'H15_UDS':
-#        Mlim = 7.847 + 1.257*z - 0.150*z**2
-#    if field == 'UltraVISTA' or field == 'H15_UltraVISTA':
-#        Mlim = 8.378 + 1.262*z - 0.153*z**2
-#    if field == 'VIDEO' or field == 'H15_VIDEO':
-#        Mlim = 8.455 + 1.697*z - 0.278*z**2
-#    else:
-#        raise ValueError('field'+field+' is not implemented !')
-#    return np.maximum(Mlim,masslim)
-
 
 class DETECTIFz(object):
     
@@ -132,7 +119,7 @@ class DETECTIFz(object):
         self.zslices = self.zslices[zinf > self.config.zmin]  #added compared to Legacy version (Sarron+21)
         
 
-    def run(self):
+    def run_main(self):
         
         if not sys.warnoptions:
             warnings.simplefilter('ignore', category=AstropyWarning)
@@ -175,12 +162,13 @@ class DETECTIFz(object):
             self.clus.write(clusdetf,overwrite=True)
             np.savez(subdetsf, subdets=self.subdets)
             print('run clus_pdz')
-        #clus,pdzclus = clus_pdz(survey,gal_Mlim,pdz_Mlim,zz,masks_im,headmasks,clus0,2)
             self.pdzclus = cleaning.clus_pdz_im3d(self,1)
             #self.clus.write(clusdetf,overwrite=True)
             np.savez(pdzclusdetf,pz=self.pdzclus,z=self.data.zz)
         
-        '''
+
+        
+    def run_R200(self):
         print('run R200')
         clus_r200 = r200.get_R200(self)
     
@@ -195,14 +183,15 @@ class DETECTIFz(object):
         np.savez(self.config.rootdir+'/pdz_im3d.candidats_'+self.field+'_SN'+str(self.config.SNmin)+
                  '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.r200.clean.npz',
                  pz=self.pdzclus_r200_clean,z=self.data.zz)
-    
-        '''
-        print('run Pmem Qiong')
+        
+
+    def run_Pmem_jwst(self):
+        print('run Pmem JWST')
         pdzgal_arx = np.load(self.config.rootdir+'galaxies.'+self.field+'.pdz.npz')
         pdzgal = pdzgal_arx['pz']
         zzgal = pdzgal_arx['z']
         
-        pmem24, pmem21_z, pmem21_Mz, pconv_z, pconv_Mz, prior_clus, mask_inclus, prior_z, Npos, NtotR, Nbkg, wnoclus= membership_Qiong.get_pmem(self, zzgal, pdzgal)
+        pmem24, pmem21_z, pmem21_Mz, pconv_z, pconv_Mz, prior_clus, mask_inclus, prior_z, Npos, NtotR, Nbkg, wnoclus= membership_jwst.get_pmem(self, zzgal, pdzgal)
         
         pmemf = (self.config.rootdir+'/p_mem.'+self.field+'_SN'+str(self.config.SNmin)+
                     '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
@@ -221,7 +210,9 @@ class DETECTIFz(object):
                  NtotR = NtotR, 
                  Nbkg = Nbkg,
                  wnoclus = wnoclus)
-
+    
+        
+    
     
     def run_Pmem(self):
     
@@ -238,8 +229,6 @@ class DETECTIFz(object):
             np.savez(im3d_info_f,im3d_info=im3d_info)
         #print('im3d_info done in ',time.time()-start_im3d_info,'s') 
         
-        
-        '''
         print('run get_nfield_noclus')
         NFf = 'NF.Mz.'+field+'.PDF_Mz.noclus.SN'+str(SNmin)+'.'+str(radnoclus)+'r200.sSFR_10.7.npz'
         w3df = 'weights3d.'+field+'.noclus.SN'+str(SNmin)+'.'+str(radnoclus)+'r200.npz'    
@@ -326,7 +315,7 @@ class DETECTIFz(object):
                       '_Mlim10.PDF_Mz.irac.sigz68_z_'+avg+
                       '.r200.clean.Ngal_SMtot.sigM95.M90.smooth.Pcclus.fits')
         clus.write(clusfinalf,overwrite=True)
-        '''
+        
     
 
     

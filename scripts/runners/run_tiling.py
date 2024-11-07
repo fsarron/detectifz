@@ -67,8 +67,6 @@ class ConfigTile:
     
 
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument("-c","--configuration", type=str,
                     help = "Configuration file")

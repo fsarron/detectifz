@@ -76,25 +76,24 @@ def cleaning(detectifz, det):
         D = SkyCoord(ra=det["ra"] * units.degree, dec=det["dec"] * units.degree)
         sep = D.separation(C)
 
-        #idm = np.where(sep < angsep_radius(clus0["z"], detectifz.config.dclean))[0] #in proper coordinates
-        mask_dclean = sep < angsep_radius(clus0["z"], detectifz.config.dclean / (1 + clus0["z"])) #in comoving coordinates.
+        if detectifz.config.detection_type == 'groups':
+            idm = np.where(sep < angsep_radius(clus0["z"], detectifz.config.dclean))[0] #in proper coordinates
+        elif detectifz.config.detection_type == 'protoclusters':
+            mask_dclean = sep < angsep_radius(clus0["z"], detectifz.config.dclean / (1 + clus0["z"])) #in comoving coordinates.
 
-        #bbox_center_sky = SkyCoord(ra=0.5*(clus0['bbox_ramax']+clus0['bbox_ramin']),
-        #                   dec=0.5*(clus0['bbox_decmax']+clus0['bbox_decmin']),
-        #                   unit='deg')  
+            #bbox_center_sky = SkyCoord(ra=0.5*(clus0['bbox_ramax']+clus0['bbox_ramin']),
+            #                   dec=0.5*(clus0['bbox_decmax']+clus0['bbox_decmin']),
+            #                   unit='deg')  
         
-        bbox_center_sky = SkyCoord(ra=clus0['ra'],
-                           dec=clus0['dec'],
-                           unit='deg')
-        sky_region = regions.RectangleSkyRegion(center=bbox_center_sky[0], 
-                                        width=0.75 * np.abs(clus0['bbox_ramax'][0]-clus0['bbox_ramin'][0]) * units.deg,
-                                        height=0.75 * np.abs(clus0['bbox_decmax'][0]-clus0['bbox_decmin'][0]) * units.deg)
-        
-        mask_inbox = sky_region.contains(D, wcs=wcs.WCS(detectifz.head2d))
-        
-        mask_merge = mask_inbox + mask_dclean
-        
-        idm = np.where(mask_merge)[0]  
+            bbox_center_sky = SkyCoord(ra=clus0['ra'],
+                               dec=clus0['dec'],
+                               unit='deg')
+            sky_region = regions.RectangleSkyRegion(center=bbox_center_sky[0], 
+                                            width=0.75 * np.abs(clus0['bbox_ramax'][0]-clus0['bbox_ramin'][0]) * units.deg,
+                                            height=0.75 * np.abs(clus0['bbox_decmax'][0]-clus0['bbox_decmin'][0]) * units.deg)
+            mask_inbox = sky_region.contains(D, wcs=wcs.WCS(detectifz.head2d))
+            mask_merge = mask_inbox + mask_dclean
+            idm = np.where(mask_merge)[0]  
 
         
         idc = np.where(zc == clus0["z"])[0][0]
@@ -135,47 +134,39 @@ def cleaning(detectifz, det):
     ### This is for protoclusters 
     ### -- NEED to put these parms in the config file ! 
     
-    requiv = np.zeros(len(clus)) * units.Mpc
+    if detectifz.config.detection_type == 'protoclusters':
+    
+        requiv = np.zeros(len(clus)) * units.Mpc
 
-    for ic in range(len(clus)):
-        xmin = np.min(detmult[ic]['bbox_ramin'])
-        xmax = np.max(detmult[ic]['bbox_ramax'])
-        ymin = np.min(detmult[ic]['bbox_decmin'])
-        ymax = np.max(detmult[ic]['bbox_decmax'])
+        for ic in range(len(clus)):
+            xmin = np.min(detmult[ic]['bbox_ramin'])
+            xmax = np.max(detmult[ic]['bbox_ramax'])
+            ymin = np.min(detmult[ic]['bbox_decmin'])
+            ymax = np.max(detmult[ic]['bbox_decmax'])
+
+            requiv[ic] = np.sqrt(physep_ang(clus['z'][ic], (ymax-ymin)) * 
+                                 physep_ang(clus['z'][ic], (xmax-xmin)) / np.pi) * (1 + clus['z'][ic])
+
+            clus[ic]['bbox_ramin'] = xmin
+            clus[ic]['bbox_ramax'] = xmax
+            clus[ic]['bbox_decmin'] = ymin
+            clus[ic]['bbox_decmax'] = ymax
+
+        ndets = np.array([len(detmult[ic]) for ic in range(len(clus))])
+
+        clus['rMpc_subdets_cMpc'] = requiv
+        clus['ndets'] = ndets
+
         
-        requiv[ic] = np.sqrt(physep_ang(clus['z'][ic], (ymax-ymin)) * 
-                             physep_ang(clus['z'][ic], (xmax-xmin)) / np.pi) * (1 + clus['z'][ic])
+    if detectifz.config.detection_type == 'protoclusters':
+        ### JWST Protoclusters r_equiv_min_cMpc = 0, n_subdets_min = 3
+        ### Euclid Protoclusters tests : r_equiv_min_cMpc = 0.5, n_subdets_min = 3
+        mask_proto_keep = ((requiv > detectifz.config.r_equiv_min_cMpc * units.Mpc ) & 
+                           (ndets > detectifz.config.n_subdets_min))
+
+        clus = clus[mask_proto_keep]
+        detmult = detmult[mask_proto_keep]
         
-        clus[ic]['bbox_ramin'] = xmin
-        clus[ic]['bbox_ramax'] = xmax
-        clus[ic]['bbox_decmin'] = ymin
-        clus[ic]['bbox_decmax'] = ymax
-
-    ndets = np.array([len(detmult[ic]) for ic in range(len(clus))])
-    
-    clus['rMpc_subdets_cMpc'] = requiv
-    clus['ndets'] = ndets
-
-    
-    ### Euclid Protoclusters!!!!!
-    #mask_proto_keep = ((requiv > 0.5 * units.Mpc ) & 
-    #                   (ndets > 3))
-    #
-    #clus = clus[mask_proto_keep]
-    #detmult = detmult[mask_proto_keep]
-    ####
-    
-    ### Qiong
-    mask_proto_keep = ((requiv > 0.0 * units.Mpc ) & 
-                       (ndets > 3))
-    
-    clus = clus[mask_proto_keep]
-    detmult = detmult[mask_proto_keep]
-    ####
-    
-    
-    # clus.write('candidats_'+field+'_SN'+SNmin+'.fits',overwrite=True)
-    
     #TO DO revert to ra, dec when coord_change !
     #clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
     #ra_original, dec_original = detectifz2radec(detectifz.data.skycoords_center, 

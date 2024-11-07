@@ -417,31 +417,7 @@ def get_R200(detectifz):
         
         memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
         mem_avail = 10*1024**3 #psutil.virtual_memory().available
-        '''
-        if memo < 0.9*mem_avail:    
-            memo_obj = int(0.9*memo)
-            ray.init(num_cpus=detectifz.config.nprocs, 
-                     object_store_memory=memo_obj,ignore_reinit_error=True,log_to_driver=False)
-    
-            weights_id = ray.put(detectifz.weights2d)  
-            clus_id = ray.put(detectifz.clus.to_pandas().to_numpy())
-            pdzclus_id = ray.put(detectifz.pdzclus)
-            sigz68_z_id = ray.put(detectifz.data.sigs.sigz68_z)
-            galmc_id = ray.put(detectifz.data.galcat_mc)
-            Mlim10_mc_id = ray.put(Mlim10_mc)
 
-            #try:
-            #Nmc = 10  #work on 10 realisation only for speed
-            res = ray.get([R200.remote(indc, clus_id, detectifz.clus.colnames, 
-                                       weights_id, detectifz.head2d, pdzclus_id, 
-                                       sigz68_z_id, galmc_id, detectifz.config.Nmc, rrMpc, 
-                                       Mlim10_mc_id, detectifz.data.zz) 
-                           for indc in range(nclus)],timeout=5000)  
-
-            ray.shutdown()
-            res = np.array(res)
-        '''
-        
         res = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
             delayed(R200)(
                 indc, 
@@ -483,9 +459,6 @@ def get_R200(detectifz):
         clus_r200.add_column(Column(r200fit[:,2],name='R200c_Mass_u68'))
         clus_r200.write(clusf,overwrite=True)
         print('R200 done in', time.time()-start,'s')
-        '''
-        else:
-            raise ValueError('Not enough memory available : ',memo,'<',mem_avail)
-        '''    
+
              
     return clus_r200 
