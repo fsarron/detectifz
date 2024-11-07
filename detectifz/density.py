@@ -490,8 +490,8 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, lgM_dens, Nmc, ma
     else:
         grid_dtfemc = np.zeros((ysize, xsize))
     kernel = astropy.convolution.Tophat2DKernel(
-        radius=0.1 / physep_ang(zslice, pixdeg).value
-    )
+        radius = 1.5 * 0.1 / ((physep_ang(zslice, pixdeg) * (1 + zslice))).value
+    ) ##250 comoving kpc, correspoding to 100kpc proper at z=0.5
     grid_dtfemc = astropy.convolution.convolve(grid_dtfemc, kernel, 
                                            preserve_nan=True)
     mm = (masks & 
@@ -663,6 +663,12 @@ def get_dmap(detectifz):
 
         end = time.time()
         print("total time DTFE (s)= " + str(end - start))
+        
+        #islices, im3d_mass = res.T
+        
+        #for islice in islices:
+        #    print(islice)
+        
         
         '''
         # write 3d image

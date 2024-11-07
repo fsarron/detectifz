@@ -50,16 +50,28 @@ class ConfigTile:
     pixdeg: float
     
     lgmass_lim: float
-    conflim_1sig: str
-    conflim_2sig: str
-    avg: str
-    nprocs: int
     zmin: float
     zmax: float
+    conflim_1sig: str
+    avg: str
+    nprocs: int
     
+    z_l68_colname: str
+    z_u68_colname: str
+    
+    zmin_pdf: float
+    zmax_pdf: float
+    pdz_dz: float
+
+    Mmin_pdf: float
+    Mmax_pdf: float
+    pdM_dM: float
+
     selection: str
     fit_Olga: bool
     fitdir_Olga: str
+    
+
 
 def read_lc(data_file):
     
@@ -99,6 +111,10 @@ def make_detectifz_galcat_zonly(flux_file, photoz_file, lightcone_file):
     flux_cat = Table.read(flux_file)
     photoz_cat = Table.read(photoz_file)
     
+    lightcone_cat.sort('GalNum')
+    flux_cat.sort('GALNUM')
+    photoz_cat.sort('GALNUM')
+    
     photoz_cat.remove_columns(['PHZ_MODE_1_SAMP',
                                'PHZ_MODE_1_AREA',
                                'PHZ_MODE_2_SAMP',
@@ -123,15 +139,21 @@ def make_detectifz_galcat_zonly(flux_file, photoz_file, lightcone_file):
                                'z_u70'])
     
     
-    
-    lightcone_cat.sort('GalNum')
-    photoz_cat.sort('GALNUM')
-    
     isin = np.isin(lightcone_cat['GalNum'],photoz_cat['GALNUM'])
+    good0 = np.all(lightcone_cat['GalNum'][isin] == photoz_cat['GALNUM'])
+    
+    isin = np.isin(lightcone_cat['GalNum'],flux_cat['GALNUM'])
+    good1 = np.all(lightcone_cat['GalNum'][isin] == flux_cat['GALNUM'])   
+    
+    good2 = np.all(photoz_cat['GALNUM'] == flux_cat['GALNUM'])
+    
     
     print('')
-    print('matching is good ? : ', np.all(lightcone_cat['GalNum'][isin] == photoz_cat['GALNUM']))
+    print('matching is good ? : ', good0 & good1 & good2)
     print('')
+    
+    
+    
     
     lgMstars = lightcone_cat['lgMstars'][isin]
     photoz_cat.add_column(Column(lgMstars, name='Mass_median'))

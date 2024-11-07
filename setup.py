@@ -29,4 +29,5 @@ opts = dict(name=NAME,
 if __name__ == '__main__':
     setup(**opts, scripts=['scripts/run_tiling',
                           'scripts/run_detectifz_tile',
-                          'scripts/make_input_Euclid'])
+                          'scripts/make_input_Euclid',
+                          'scripts/run_detectifz_notiling'])

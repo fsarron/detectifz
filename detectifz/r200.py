@@ -215,8 +215,11 @@ def field_mass_density(inputs):
     dDELTA_gal = np.zeros(Nr)
 
     ##get area of local field
-    aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0),
-                                        r_out=angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    #aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0),
+    #                                    r_out=angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3 / (1 + zclus),H0=cosmo.H0,Om0=cosmo.Om0),
+                                        r_out=angsep_radius(zclus,5 / (1 + zclus),H0=cosmo.H0,Om0=cosmo.Om0)) ## comoving
+    
     aperture_f_loc_pix = aperture_f_loc.to_pixel(w2d) 
     aperture_f_loc_masks = aperture_f_loc_pix.to_mask(method='center')
     aperture_f_loc_data = aperture_f_loc_masks.multiply(weights)
@@ -241,7 +244,10 @@ def field_mass_density(inputs):
     
     ##get mass density of local field
     sepgal = clussky.separation(galsky)   
-    masksep_Nf_loc = (sepgal > angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0)) & (sepgal < angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    #masksep_Nf_loc = (sepgal > angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0)) & (sepgal < angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    masksep_Nf_loc = ((sepgal > angsep_radius(zclus, 3 / (1 + zclus), H0=cosmo.H0, Om0=cosmo.Om0)) & 
+                      (sepgal < angsep_radius(zclus, 5 / (1 + zclus), H0=cosmo.H0, Om0=cosmo.Om0))) ## comoving
+                      
     M, z = galmc[:Nmc,masksep_Nf_loc,4], galmc[:Nmc,masksep_Nf_loc,3]
     z = np.minimum(np.maximum(zz[0], z), zz[-1])
     mask_Nf_loc = (M > Mlim10_mc[:Nmc,masksep_Nf_loc]) & (z >= zinf) & (z < zsup)
@@ -250,7 +256,9 @@ def field_mass_density(inputs):
     #dNM_f_loc = np.sqrt(np.sum(np.array([len(galmc[imc,masksep_Nf_loc,4][mask_Nf_loc[imc]]) for imc in range(Nmc)])))/Nmc
     dNM_f_loc = np.std(np.array([np.sum(10**galmc[imc,masksep_Nf_loc,4][mask_Nf_loc[imc]]) for imc in range(Nmc)]))
 
-    loc = [NM_f_loc, dNM_f_loc]
+    #loc = [NM_f_loc, dNM_f_loc]
+    loc = [NM_f_glob, dNM_f_glob]  ##comoving
+    area_f_loc = fov_area  ##comoving
     
     return glob, loc, area_f_loc    
 
@@ -280,7 +288,7 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     #print('start',indc)
     H0_fid = 70.
     Om0_fid=0.3
-    H0_mock = 73. #H0_fid
+    H0_mock = H0_fid
     Om0_mock = Om0_fid
     rrMpc_coarse = rrMpc[::2]
     warnings.simplefilter("ignore")
@@ -290,8 +298,8 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     decclus=clus['dec'][indc] 
     zclus=clus['z'][indc]
     
-    if not(indc%int(len(clus)/(100/5))):
-        print(int(100*indc/len(clus)),'% completed')
+    #if not(indc%int(len(clus)/(100/5))):
+    #    print(int(100*indc/len(clus)),'% completed')
     
     w2d = wcs.WCS(head2d)
     weights = np.copy(weights_id)
@@ -404,7 +412,8 @@ def get_R200(detectifz):
                                     detectifz.data.galcat_mc[:,:,3]), 
                          detectifz.data.zz[-1])
         
-        Mlim10_mc = Mlim_DETECTIFz(detectifz.data.logMlim90,10,zmc)
+        #Mlim10_mc = Mlim_DETECTIFz(detectifz.data.logMlim90,10,zmc)
+        Mlim10_mc = detectifz.data.lgmass_lim * np.ones_like(zmc)
         
         memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
         mem_avail = 10*1024**3 #psutil.virtual_memory().available

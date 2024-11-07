@@ -54,12 +54,15 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
 
     # define min group area as disk of r=0.25Mpc in number of pixels
     w = wcs.WCS(head)
-    rmin = angsep_radius(zslice, 0.25)
+    #rmin = angsep_radius(zslice, 0.25)
+    rmin = angsep_radius(zslice, 0.5 / (1 + zslice)) #in comoving Mpc for Qiong
+
     min_area_deg = np.pi * rmin ** 2
 
     dpix = w.wcs.cdelt[0] * w.wcs.cdelt[1]
     min_area = min_area_deg.value / dpix
-    max_area = np.pi * angsep_radius(zslice, 4).value / dpix
+    #max_area = np.pi * angsep_radius(zslice, 10 ).value / dpix
+    max_area = np.pi * angsep_radius(zslice, 10  / (1 + zslice)).value / dpix #in comoving Mpc for Qiong
 
     # compute mean and dispersion of wlog_dgal
     # mud = np.nanmean(log_dgal_s[~weights])
@@ -96,6 +99,11 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
             ),
             unit=units.deg,
         )
+        
+        ra = det_table["sky_max"].ra.value
+        ra[ra > 180.] -= 360
+        
+        dec = det_table["sky_max"].dec.value
 
         xy = (
             np.c_[cat.maxval_xindex,
@@ -231,13 +239,22 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
 
         rdet_sky = rr * w.wcs.cdelt[0] * units.deg / units.pix
         rdet_Mpc = physep_ang(zslice, rdet_sky.value)
+        
+        ramin = cat.sky_bbox_ll.ra.value
+        ramin[ramin > 180.] -= 360
+            
+        ramax = cat.sky_bbox_ur.ra.value
+        ramax[ramax > 180.] -= 360
 
+        decmin = cat.sky_bbox_ll.dec.value
+        decmax = cat.sky_bbox_ur.dec.value
+            
         tab = np.c_[
             np.repeat(l, len(det_table)),
             det_table["id"],
-            det_table["sky_max"].ra.value,
+            ra,
             era,
-            det_table["sky_max"].dec.value,
+            dec,
             edec,
             zz,
             zzi,
@@ -252,6 +269,14 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
             unmasked_area_rdet.value,
             det_table["max_value"],
             det_table['segment_flux'],
+            #det_table['bbox_xmin'], 
+            #det_table['bbox_xmax'],
+            #det_table['bbox_ymin'], 
+            #det_table['bbox_ymax']
+            ramin,
+            ramax,
+            decmin,
+            decmax
         ]
         tab = tab[np.where(rr > 0.01)]
 
@@ -267,7 +292,7 @@ def det_photutils(SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, he
         tab = np.array([])
         pos = np.array([])
 
-    return tab, pos
+    return tab, pos, segm_deblend
 
 
 def detection(detectifz):
@@ -344,15 +369,14 @@ def detection(detectifz):
                                 )
                 for l in range(len(centre))))
 
-
     # remove slices with no det from the list
     ddet = []
     det = []
-    # segm_dgal0 = []
+    segm_dgal0 = []
     pos = []
     for i in range(len(detect_all)):
         pos.append(detect_all[i][1])
-        # segm_dgal0.append(detect_all[i][1])
+        segm_dgal0.append(detect_all[i][2])
         det.append(detect_all[i][0])
         if len(detect_all[i][0]) > 0:
             ddet.append(detect_all[i][0])
@@ -377,7 +401,11 @@ def detection(detectifz):
         "area_r1Mpc",
         "area_rdet",
         "max_value",
-        "segment_flux"
+        "segment_flux",
+        "bbox_ramin",
+        "bbox_ramax",
+        "bbox_decmin",
+        "bbox_decmax"
     ]
     for i, n in enumerate(det_tab.colnames):
         det_tab.rename_column(n, new_names[i])
@@ -385,4 +413,4 @@ def detection(detectifz):
     det_tab.sort("SN")
     det_tab.reverse()
 
-    return det, det_tab, pos
+    return det, det_tab, pos, segm_dgal0
