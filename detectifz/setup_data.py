@@ -78,7 +78,11 @@ class Data(object):
         self.get_samples()
         
         #convert bright star masks to fits if needed
-        self.make_fits_radec_masks()
+        #this should not be necessary if in tileing mode
+        #so I add the if conditions to make sure I spot if 
+        #smothing went wrong in tiling
+        if self.tile_id = None:
+            self.make_fits_radec_masks()
         
         ## get maglim mask
         self.make_detectifz_masks()
