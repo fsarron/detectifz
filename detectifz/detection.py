@@ -25,7 +25,7 @@ __all__ = ["det_photutils", "detection"]
 
 
 #@ray.remote(max_calls=10)
-def det_photutils(detection_type, SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, head):
+def det_photutils(objects_detected, SNmin, l, centre_id, zinf_id, zsup_id, im3d_id, weights_id, head):
     """Detects regions above a given signal-to-noise in a 2D map.
 
     Parameters
@@ -64,9 +64,9 @@ def det_photutils(detection_type, SNmin, l, centre_id, zinf_id, zsup_id, im3d_id
 
     dpix = w.wcs.cdelt[0] * w.wcs.cdelt[1]
     min_area = min_area_deg.value / dpix
-    if detection_type == 'groups':
+    if objects_detected == 'groups':
         max_area = np.pi * angsep_radius(zslice, 10 ).value / dpix
-    elif  detection_type == 'protoclusters':
+    elif  objects_detected == 'protoclusters':
         max_area = np.pi * angsep_radius(zslice, 10  / (1 + zslice)).value / dpix #in comoving Mpc for Qiong
 
     # compute mean and dispersion of wlog_dgal
@@ -331,7 +331,7 @@ def detection(detectifz):
     centre, zinf, zsup = detectifz.zslices.T 
 
     detect_all = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
-        delayed(det_photutils)(detectifz.config.detection_type,
+        delayed(det_photutils)(detectifz.config.objects_detected,
                                 detectifz.config.SNmin, 
                                l, 
                                 centre,

@@ -20,7 +20,8 @@ from pydantic import validate_arguments
 @validate_arguments
 @dataclass
 class ConfigDetectifz:
-    detection_type: st
+    detection_type: str
+    use_mass_density: bool
 
     obsmag_lim: float
     lgmass_comp: float
@@ -35,7 +36,6 @@ class ConfigDetectifz:
     radnoclus : float
     conflim_1sig: str
     conflim_2sig: str
-    lgM_dens: bool
     avg: str
     nprocs: int
 

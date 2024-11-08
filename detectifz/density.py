@@ -369,7 +369,7 @@ def get_dtfemc_nogrid_ray(islice, zslices, galcat_mc, maskMlim_mc, Nmc, map_para
 
 
 
-def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, lgM_dens, Nmc, map_params, masks, headmasks):
+def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, use_mass_density, Nmc, map_params, masks, headmasks):
     """Make DTFE overdensity map in one redshift slice.
 
     Parameters
@@ -449,7 +449,7 @@ def get_dtfemc_nogrid(islice, zslices, galcat_mc, maskMlim_mc, lgM_dens, Nmc, ma
     for imc in range(Nmc):
         mask_mc_all_imc = mask_mc[imc][mask_mc_all]
         pmask_dtfe = np.concatenate([mask_mc_all_imc,np.repeat(True, ngal_fill)])
-        if lgM_dens:
+        if use_mass_density:
             mass_dtfe = np.concatenate([10**galcat_mc[imc,:,4][mask_mc_all][mask_mc_all_imc],10**massfill])
         else:
             mass_dtfe = np.ones(np.sum(pmask_dtfe))
@@ -576,7 +576,7 @@ def get_dmap(detectifz):
         masks[np.where(np.isnan(masks))] = 0
         masks = masks.astype(bool)
     
-        if detectifz.config.lgM_dens:
+        if detectifz.config.use_mass_density:
             print('')
             print('COMPUTING STELLAR-MASS DENSITY')
             print('')
@@ -594,7 +594,7 @@ def get_dmap(detectifz):
                 detectifz.zslices, 
                 detectifz.data.galcat_mc, 
                 detectifz.maskMlim_mc, 
-                detectifz.config.lgM_dens,
+                detectifz.config.use_mass_density,
                 detectifz.config.Nmc, 
                 [xsize, ysize, xminmax, yminmax, detectifz.config.pixdeg], 
                 masks, 

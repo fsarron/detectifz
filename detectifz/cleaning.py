@@ -76,9 +76,9 @@ def cleaning(detectifz, det):
         D = SkyCoord(ra=det["ra"] * units.degree, dec=det["dec"] * units.degree)
         sep = D.separation(C)
 
-        if detectifz.config.detection_type == 'groups':
+        if detectifz.config.objects_detected == 'groups':
             idm = np.where(sep < angsep_radius(clus0["z"], detectifz.config.dclean))[0] #in proper coordinates
-        elif detectifz.config.detection_type == 'protoclusters':
+        elif detectifz.config.objects_detected == 'protoclusters':
             mask_dclean = sep < angsep_radius(clus0["z"], detectifz.config.dclean / (1 + clus0["z"])) #in comoving coordinates.
 
             #bbox_center_sky = SkyCoord(ra=0.5*(clus0['bbox_ramax']+clus0['bbox_ramin']),
@@ -134,7 +134,7 @@ def cleaning(detectifz, det):
     ### This is for protoclusters 
     ### -- NEED to put these parms in the config file ! 
     
-    if detectifz.config.detection_type == 'protoclusters':
+    if detectifz.config.objects_detected == 'protoclusters':
     
         requiv = np.zeros(len(clus)) * units.Mpc
 
@@ -158,7 +158,7 @@ def cleaning(detectifz, det):
         clus['ndets'] = ndets
 
         
-    if detectifz.config.detection_type == 'protoclusters':
+    if detectifz.config.objects_detected == 'protoclusters':
         ### JWST Protoclusters r_equiv_min_cMpc = 0, n_subdets_min = 3
         ### Euclid Protoclusters tests : r_equiv_min_cMpc = 0.5, n_subdets_min = 3
         mask_proto_keep = ((requiv > detectifz.config.r_equiv_min_cMpc * units.Mpc ) & 
@@ -228,12 +228,15 @@ def clus_pdz_im3d(detectifz, smooth):
 
     for indc in range(nclus):
         # print(indc)
-        #aper = SkyCircularAperture(
-        #    clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 0.25)
-        #)
-        aper = SkyCircularAperture(
-            clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 2 / (1 + detectifz.clus["z"][indc]))
-        )##comoving
+        
+        if detectifz.config.objects_detected == 'groups': 
+            aper = SkyCircularAperture(
+                clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 0.25)
+            )
+        elif detectifz.config.objects_detected == 'protoclusters':
+            aper = SkyCircularAperture(
+                clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 2 / (1 + detectifz.clus["z"][indc]))
+            )##comoving
         
         aper_pix = aper.to_pixel(w2d)
         aper_masks = aper_pix.to_mask(method="center")

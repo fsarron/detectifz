@@ -65,20 +65,29 @@ class Data(object):
         self.Nmc = config.Nmc
         self.lgmass_lim = config.lgmass_lim
         print(self.lgmass_lim)
+        self.input_masksfile = config.input_masksfile
         self.masksfile_radec = self.rootdir+'/masks.'+self.field+'.radec.fits'
-        self.masksfile = self.rootdir+'/masks.'+self.field+'.radec.fits'   ## to modify for coord cahnge of masks
-        
+        self.masksfile_detectifz = self.rootdir+'/masks.'+self.field+'.detectifz.fits'
+
         self.tile_id = tile_id        
         
         ## get maglim mask
         self.get_galcat()
         
+        ## get maglim mask
+        self.get_samples()
+        
+        #convert bright star masks to fits if needed
+        self.make_fits_radec_masks()
+        
+        ## get maglim mask
+        self.make_detectifz_masks()
+        
         ###get 1D PDFs (z and M)
         self.zz = np.arange(config.zmin_pdf, config.zmax_pdf+config.pdz_dz, config.pdz_dz)
         self.MM = np.arange(config.Mmin_pdf, config.Mmax_pdf+config.pdM_dM, config.pdM_dM)
 
-        
-        galcat_mc, xyminmax = self.get_data_detectifz()
+        galcat_mc, xyminmax = self.make_detectifz_data()
         #self.galcat = galcat
         self.galcat_mc = galcat_mc
         self.galcat_mc_master = np.vstack(self.galcat_mc)
@@ -143,19 +152,17 @@ class Data(object):
         
         self.galcat.write(self.rootdir+'/galaxies.'+self.field+'.galcat.detectifz.fits', overwrite=True)
         
-    
-    def get_data_detectifz(self):
+        
+    def get_samples(self):
         '''
-        read galaxy catalogue and HDF_PDF_Mz file and draw 100 realization from it
-    
-        Save an array containing the 100 MC galaxy catalogues with (id,ra,dec,z,M*) to .npz file
+        read file containting redshift / mass samples.
         '''
-                
+        
         Mzf = self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.fits'
         Mzf_masked =  self.rootdir+'/galaxies.'+self.field+'.'+str(self.Nmc)+'MC.Mz.masked_m90.fits'
         #print(Mzf)
         if Path(Mzf_masked).is_file():
-            print('samples already saved, we read it')
+            print('masked samples already saved, we read it')
             #Mz_t = np.load(Mzf_masked)['Mz']
             tMz = Table.read(Mzf_masked)
             if not('lgM_SAMPLES' in tMz.colnames):
@@ -172,20 +179,31 @@ class Data(object):
                 tMz['lgM_SAMPLES'] = np.repeat(self.galcat['Mass_median'][self.mask_mlim], 
                                                self.Nmc).reshape((len(tMz), self.Nmc))
                 self.has_lgM = False
-        else:    
-            print('sample (M,z)...')
-            Mz = self.sample_pdf()
-            tMz = Table(np.moveaxis(Mz, 2, 1), names=['lgM_SAMPLES', 'Z_SAMPLES'])
-            tMz.write(Mzf_masked)
+        else:
+            raise ValueError('sampling inside detectifz is currently disabled, you should provide a FITS file with redshift/mass samples. We provide an helper function for sampling if needed in scripts/. Please refer to examples for more details on how to use it.')
+            #print('sample (M,z)...')
+            #Mz = self.sample_pdf()
+            #tMz = Table(np.moveaxis(Mz, 2, 1), names=['lgM_SAMPLES', 'Z_SAMPLES'])
+            #tMz.write(Mzf_masked)
             #np.savez(Mzf_masked,Mz=Mz)
             #Mz = Mz[self.mask_mlim]
+                
+        self.zMC = tMz['Z_SAMPLES']
+        self.lgMMC = tMz['lgM_SAMPLES']
         
+    
+    def make_detectifz_data(self):
+        '''
+        read galaxy catalogue and HDF_PDF_Mz file and draw 100 realization from it
+    
+        Save an array containing the 100 MC galaxy catalogues with (id,ra,dec,z,M*) to .npz file
+        '''
         
         idmc = np.repeat(np.array(self.galcat['id']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         ramc = np.repeat(np.array(self.galcat['ra']),self.Nmc).reshape(len(self.galcat),self.Nmc)
         decmc = np.repeat(np.array(self.galcat['dec']),self.Nmc).reshape(len(self.galcat),self.Nmc)
-        zmc = tMz['Z_SAMPLES']
-        Mmc = tMz['lgM_SAMPLES']
+        zmc = self.zMC
+        Mmc = self.lgMMC
     
         galmc = np.stack([idmc,ramc,decmc,zmc,Mmc]).T
         
@@ -194,10 +212,11 @@ class Data(object):
     
         return galmc, xyminmax
 
-
-    def get_masks(self):
-        ### convert radec mask (FITS with wcs) to DETECTIFz coordinates mask
-        masks_radec = fits.open(self.masksfile)[0]
+    def make_detectifz_masks(self):
+        '''
+        converts radec mask (FITS with wcs) to DETECTIFz coordinates mask
+        '''    
+        masks_radec = fits.open(self.masksfile_radec)[0]
         
         x = np.arange(masks_radec.header['NAXIS1'])
         y = np.arange(masks_radec.header['NAXIS2'])
@@ -296,12 +315,12 @@ class Data(object):
         #print(result)
         
         pixcat_masks = Table.read(self.rootdir+'/pixcat_mask.'+self.field+'.tmp.fits')
-        
+                
         hdu = fits.PrimaryHDU(np.array(pixcat_masks['flag']).reshape(
             (headmasks_detectifz['NAXIS2'],
              headmasks_detectifz['NAXIS1'])),
                               header=headmasks_detectifz)
-        hdu.writeto(self.rootdir+'/masks.'+self.field+'.detectifz.fits', 
+        hdu.writeto(self.masksfile_detectifz, 
                     overwrite=True)
         
         
@@ -316,6 +335,80 @@ class Data(object):
         
 
         return hdu
+    
+    
+    def make_fits_radec_masks(self):
+        '''
+        convert masks to fits file if it is not
+        '''
+    
+        if self.config.maskstype == 'ds9' :
+            self.run_venice_pixelize()
+
+        elif self.config.maskstype == 'fits' :
+            pass
+
+        elif self.config.maskstype == 'none' :
+            f = open(self.config.rootdir+
+                     '/none.reg', "w")
+            f.write("# FILTER HSC-G\n")
+            f.write("wcs; fk5\n")
+            f.write("circle("+str(np.median(self.galcat['ra_original']))+
+                    ","+str(np.median(self.galcat['dec_original']))+
+                    ",0.00000001d)")
+            f.close()
+            self.input_masksfile = (self.rootdir+
+                                     '/none.reg')
+
+            self.run_venice_pixelize()
+    
+    
+    
+    def run_venice_pixelize(self):
+
+        rainf = self.galcat['ra'].min() - 0.05
+        rasup = self.galcat['ra'].max() + 0.05
+
+        decinf = self.galcat['ra'].min() - 0.05
+        decsup = self.galcat['ra'].max() + 0.05
+
+            
+        ##lance venice to get pixelized mask at giuven resolution with given (ra,dec) limits
+        process = subprocess.Popen(["venice", 
+                                    "-m", 
+                                    self.input_masksfile, 
+                                    "-nx",
+                                    str(int((rasup-rainf)/self.pixdeg)),
+                                    "-ny",
+                                    str(int((decsup-decinf)/self.pixdeg)),
+                                    "-xmin", 
+                                    str(rainf),
+                                    "-xmax",
+                                    str(rasup),
+                                    "-ymin",
+                                    str(decinf),
+                                    "-ymax",
+                                    str(decsup),
+                                    "-o", 
+                                    self.thistile_dir+"/masks."+self.field+".tmp.mat"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE, 
+                                   text=True)
+        #print("the commandline is {}".format(process.args))
+        process.wait()
+        result = process.communicate()
+        #print(result)
+        flag = np.loadtxt(self.thistile_dir+'/masks.'+self.field+'.tmp.mat')
+        
+        ### from the pixelized matrix, make a fits hdu with WCS information
+        w = wcs.WCS(naxis=2)
+        w.wcs.crpix = [1.0, 1.0]
+        w.wcs.cdelt = np.array([self.pixdeg, self.pixdeg])
+        w.wcs.crval = [rainf, decinf]
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        
+        FITSmasks = fits.PrimaryHDU(data=flag.astype(np.int8),header=w.to_header())
+        FITSmasks.writeto(self.masksfile_radec, overwrite=True)    
     
     
     def sample_pdf(self):
