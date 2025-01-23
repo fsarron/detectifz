@@ -12,7 +12,7 @@ from astropy.io import fits
 import ray
 from . import density, detection, cleaning, r200, members, membership_jwst
 from .tiling import Tile
-from .utils import Mlim_DETECTIFz
+from .utils import Mlim_DETECTIFz, detectifz2radec
 from astropy import units
 from collections import namedtuple
 
@@ -100,7 +100,7 @@ class DETECTIFz(object):
         i=0
 
         while (zhigh[i] < self.config.zmax):
-            jj = np.int((zcentre[i]-self.data.zz[0])/dz)
+            jj = np.intc((zcentre[i]-self.data.zz[0])/dz)
             if self.data.sigs.sigz68_z[jj] > 0:
                 zlow.append(zcentre[i] - max(0.01,self.data.sigs.sigz68_z[jj]))
                 zhigh.append(zcentre[i] + max(0.01,self.data.sigs.sigz68_z[jj]))
@@ -153,21 +153,30 @@ class DETECTIFz(object):
         else:    
             print('run detection')
             self.det_slices, alldet, pos_slices, segm = detection.detection(self)
-            np.savez(det_slicesf, det_slices=self.det_slices)
-            np.savez(alldet_f, alldet=alldet)
-            np.savez(segm_f, segm=segm)
+            np.savez(det_slicesf, *self.det_slices)
+            np.savez(alldet_f, *alldet)
+            np.savez(segm_f, *segm)
 
             print('run cleaning')
             self.clus, self.subdets = cleaning.cleaning(self,alldet)
             self.clus.write(clusdetf,overwrite=True)
-            np.savez(subdetsf, subdets=self.subdets)
+            np.savez(subdetsf, *self.subdets)
             print('run clus_pdz')
             self.pdzclus = cleaning.clus_pdz_im3d(self,1)
             #self.clus.write(clusdetf,overwrite=True)
             np.savez(pdzclusdetf,pz=self.pdzclus,z=self.data.zz)
         
+        # Obtaining ICRS coordinates on the final detection catalog
 
+        true_ra, true_dec = detectifz2radec(self.data.skycoords_center,[self.clus['ra'],self.clus['dec']])
+        self.tmaster = self.clus
+        self.tmaster['ra_detectifz'] = self.tmaster['ra']
+        self.tmaster['dec_detectifz'] = self.tmaster['dec']
+        self.tmaster['ra'] = true_ra
+        self.tmaster['dec'] = true_dec
+        self.tmaster.write(self.config.rootdir+'/detections_'+self.field+'.fits',overwrite=True)
         
+
     def run_R200(self):
         print('run R200')
         clus_r200 = r200.get_R200(self)

@@ -68,6 +68,7 @@ class Data(object):
         self.input_masksfile = config.input_masksfile
         self.masksfile_radec = self.rootdir+'/masks.'+self.field+'.radec.fits'
         self.masksfile_detectifz = self.rootdir+'/masks.'+self.field+'.detectifz.fits'
+        self.pixdeg = config.pixdeg
 
         self.tile_id = tile_id        
         
@@ -81,8 +82,8 @@ class Data(object):
         #this should not be necessary if in tileing mode
         #so I add the if conditions to make sure I spot if 
         #smothing went wrong in tiling
-        if self.tile_id = None:
-            self.make_fits_radec_masks()
+        print('making radec masks')
+        self.make_fits_radec_masks()
         
         ## get maglim mask
         self.make_detectifz_masks()
@@ -155,6 +156,12 @@ class Data(object):
         #self.galcat.rename_columns(['ra_original', 'dec_original'], ['ra', 'dec'])
         
         self.galcat.write(self.rootdir+'/galaxies.'+self.field+'.galcat.detectifz.fits', overwrite=True)
+
+    def get_masks(self):
+        '''
+        Read mask fits file
+        '''
+        return fits.open(self.masksfile_radec)[0]
         
         
     def get_samples(self):
@@ -209,7 +216,7 @@ class Data(object):
         zmc = self.zMC
         Mmc = self.lgMMC
     
-        galmc = np.stack([idmc,ramc,decmc,zmc,Mmc]).T
+        galmc = np.array(np.stack([idmc,ramc,decmc,zmc,Mmc])).T
         
         xyminmax = np.array([self.galcat['ra'].min(),self.galcat['ra'].max(),
                              self.galcat['dec'].min(),self.galcat['dec'].max()])
@@ -373,11 +380,11 @@ class Data(object):
         rainf = self.galcat['ra'].min() - 0.05
         rasup = self.galcat['ra'].max() + 0.05
 
-        decinf = self.galcat['ra'].min() - 0.05
-        decsup = self.galcat['ra'].max() + 0.05
+        decinf = self.galcat['dec'].min() - 0.05
+        decsup = self.galcat['dec'].max() + 0.05
 
             
-        ##lance venice to get pixelized mask at giuven resolution with given (ra,dec) limits
+        ##lance venice to get pixelized mask at given resolution with given (ra,dec) limits
         process = subprocess.Popen(["venice", 
                                     "-m", 
                                     self.input_masksfile, 
@@ -394,7 +401,7 @@ class Data(object):
                                     "-ymax",
                                     str(decsup),
                                     "-o", 
-                                    self.thistile_dir+"/masks."+self.field+".tmp.mat"], 
+                                    self.rootdir+"/masks."+self.field+".tmp.mat"], 
                                    stdout=subprocess.PIPE, 
                                    stderr=subprocess.PIPE, 
                                    text=True)
@@ -402,7 +409,7 @@ class Data(object):
         process.wait()
         result = process.communicate()
         #print(result)
-        flag = np.loadtxt(self.thistile_dir+'/masks.'+self.field+'.tmp.mat')
+        flag = np.loadtxt(self.rootdir+'/masks.'+self.field+'.tmp.mat')
         
         ### from the pixelized matrix, make a fits hdu with WCS information
         w = wcs.WCS(naxis=2)

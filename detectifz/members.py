@@ -19,7 +19,7 @@ from photutils import SkyCircularAnnulus, SkyCircularAperture
 
 from astropy.wcs.utils import proj_plane_pixel_area,proj_plane_pixel_scales
 
-import lnr
+# import lnr
 
 import warnings
 from astropy.utils.exceptions import AstropyWarning,AstropyUserWarning

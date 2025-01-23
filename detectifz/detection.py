@@ -3,7 +3,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 
 import numpy as np
-#import ray
+import ray
 import psutil
 import time
 
@@ -55,9 +55,9 @@ def det_photutils(objects_detected, SNmin, l, centre_id, zinf_id, zsup_id, im3d_
     # define min group area as disk of r=0.25Mpc in number of pixels
     w = wcs.WCS(head)
     
-    if detection_type == 'groups':
+    if objects_detected == 'groups':
         rmin = angsep_radius(zslice, 0.25)
-    elif detection_type == 'protoclusters':
+    elif objects_detected == 'protoclusters':
         rmin = angsep_radius(zslice, 0.5 / (1 + zslice)) #in comoving Mpc for Qiong
 
     min_area_deg = np.pi * rmin ** 2
@@ -330,7 +330,7 @@ def detection(detectifz):
 
     centre, zinf, zsup = detectifz.zslices.T 
 
-    detect_all = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
+    detect_all = Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e9)(
         delayed(det_photutils)(detectifz.config.objects_detected,
                                 detectifz.config.SNmin, 
                                l, 
@@ -341,7 +341,7 @@ def detection(detectifz):
                                 detectifz.weights2d, 
                                 detectifz.head2d
                                 )
-                for l in range(len(centre))))
+                for l in range(len(centre)))
 
     # remove slices with no det from the list
     ddet = []
@@ -349,9 +349,9 @@ def detection(detectifz):
     segm_dgal0 = []
     pos = []
     for i in range(len(detect_all)):
-        pos.append(detect_all[i][1])
-        segm_dgal0.append(detect_all[i][2])
-        det.append(detect_all[i][0])
+        pos.append(np.array(detect_all[i][1]))
+        segm_dgal0.append(np.array(detect_all[i][2]))
+        det.append(np.array(detect_all[i][0]))
         if len(detect_all[i][0]) > 0:
             ddet.append(detect_all[i][0])
 

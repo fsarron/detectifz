@@ -100,7 +100,7 @@ def cleaning(detectifz, det):
         idx = np.sort(det[idm]["slice_idx"])
 
         g = group_consecutives(np.unique(idx))
-        tmp = np.empty_like(g)
+        tmp = [None]*len(g)
         for i in range(len(g)):
             tmp[i] = np.isin(idc, g[i])
         idg = np.where(tmp)[0][0]
@@ -129,7 +129,7 @@ def cleaning(detectifz, det):
 
     idx_sort = np.argsort(clus['z'])
     clus.sort("z")
-    detmult = np.array(detmult)[idx_sort]
+    detmult = [detmult[x] for x in idx_sort]
     
     ### This is for protoclusters 
     ### -- NEED to put these parms in the config file ! 
@@ -165,7 +165,7 @@ def cleaning(detectifz, det):
                            (ndets > detectifz.config.n_subdets_min))
 
         clus = clus[mask_proto_keep]
-        detmult = detmult[mask_proto_keep]
+        detmult = [detmult[x] for x in mask_proto_keep]
         
     #TO DO revert to ra, dec when coord_change !
     #clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
