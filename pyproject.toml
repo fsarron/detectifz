@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "detectifz"
+authors = [{name="Florian Sarron", email="florian.sarron@irit.fr"}]
+license = {text = "GPLv3"}
+description = "DETECTIFz is a galaxy group finder algorithm that detectects groups in multiband photometric galaxy surveys"
+requires-python = ">=3.10"
+version = "0.0.1"
+dependencies = [    
+    "astropy",
+    "numpy",
+    "numba", 
+    "photutils", 
+    "scipy",
+    "Pillow",
+    "psutil",
+    "shapely",
+    "reproject", 
+    "h5py", 
+    "pandas", 
+    "pathlib", 
+    "matplotlib"
+]
+
+[tool.setuptools]
+scripts = [
+    "scripts/runners/_bin/run_tiling",
+    "scripts/runners/_bin/run_detectifz_tile",
+    "scripts/runners/_bin/run_detectifz_notiling"
+]
+
+[tool.setuptools]
+platforms = ["any"]
+
+[tool.setuptools.packages]
+find = { where = ["."] }
+
+[project.readme]
+file = "README.md"
+content-type = "text/x-rst"
+
+[project.urls]
+Source = "https://github.com/fsarron/detectifz"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+    "coverage",
+]
+
+#####################################################################
+# Pytest configuration and coverage reporting
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = [
+    "detectifz/tests",
+]
+
+[tool.coverage.run]
+branch = true
+# omit = examples/*,src/db/versions/*  # define paths to omit
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

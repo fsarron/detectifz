@@ -1,0 +1,5 @@
+version.lo: /Users/tdusserre/Downloads/gsl-2.8/version.c config.h \
+  gsl_version.h gsl/gsl_types.h
+config.h:
+gsl_version.h:
+gsl/gsl_types.h:
