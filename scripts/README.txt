@@ -1,1 +1,0 @@
-./LAUNCH_TILES_qsub.sh ROOTDIR=/data80/sarron/detectifz_runs/EUCLID_Olga SCRIPTS_DIR=/home/sarron/softs/detectifz_dev/scripts/ FIELD=GAEA_ECLQ RELEASE=SDR3_DDP

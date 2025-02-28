@@ -80,7 +80,7 @@ def detectifz2radec(skycoords_center, detectifz_coords):
 
 
 
-cosmo = astropy.cosmology.FlatLambdaCDM(H0=70., Om0=0.3)
+cosmo = astropy.cosmology.FlatLambdaCDM(H0=73., Om0=0.25)
 
 rootdir = '/data80/sarron/detectifz_runs/EUCLID_WP11/GAEA_ECLQ/SDR3_DDP/'
 
@@ -106,7 +106,7 @@ for tile in ['tile0000',
              'tile0015'] :
     thisdir = rootdir + tile + '/'
     
-    t = Table.read(thisdir + 'candidats_GAEA_ECLQ_SN1.5_Mlim10.25.sigz68_z_50p.r200.clean.fits')
+    t = Table.read(thisdir + 'candidats_GAEA_ECLQ_SN1.5_Mlim10.25.sigz68_z_50p.fits')
     
     ra_c = np.load(thisdir + 'skycoords_center.npz')['ra']
     if ra_c > 180. :
@@ -131,9 +131,11 @@ tmaster['Dec_over'] = tmaster0['dec']
 tmaster['z_over'] = tmaster0['z']
 tmaster['SN'] = tmaster0['SN']
 tmaster['Membership'] = -99 * np.ones(len(tmaster))
-tmaster['size'] = angsep_radius(tmaster['z_over'], tmaster0['R200c_Mass_median']).to(units.arcmin)
+tmaster['size'] = angsep_radius(tmaster['z_over'], tmaster0['rMpc_subdets'].value).to(units.arcmin)
 
-tmaster.write(rootdir + 'detections_DETECTIFz_GAEA_ECLQ_SDR3_DDP_040823.fits')
+#master['size'] = angsep_radius(tmaster['z_over'], tmaster0['R200c_Mass_median']).to(units.arcmin)
+
+tmaster.write(rootdir + 'detections_DETECTIFz_GAEA_ECLQ_SDR3_DDP_241023.fits')
 
     
     

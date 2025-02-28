@@ -22,7 +22,7 @@ from photutils import SkyCircularAnnulus, SkyCircularAperture
 
 from astropy.wcs.utils import proj_plane_pixel_area,proj_plane_pixel_scales
 
-import lnr
+# import lnr
 
 import time
 
@@ -215,8 +215,11 @@ def field_mass_density(inputs):
     dDELTA_gal = np.zeros(Nr)
 
     ##get area of local field
-    aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0),
-                                        r_out=angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    #aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0),
+    #                                    r_out=angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    aperture_f_loc = SkyCircularAnnulus(clussky, r_in=angsep_radius(zclus,3 / (1 + zclus),H0=cosmo.H0,Om0=cosmo.Om0),
+                                        r_out=angsep_radius(zclus,5 / (1 + zclus),H0=cosmo.H0,Om0=cosmo.Om0)) ## comoving
+    
     aperture_f_loc_pix = aperture_f_loc.to_pixel(w2d) 
     aperture_f_loc_masks = aperture_f_loc_pix.to_mask(method='center')
     aperture_f_loc_data = aperture_f_loc_masks.multiply(weights)
@@ -241,7 +244,10 @@ def field_mass_density(inputs):
     
     ##get mass density of local field
     sepgal = clussky.separation(galsky)   
-    masksep_Nf_loc = (sepgal > angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0)) & (sepgal < angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    #masksep_Nf_loc = (sepgal > angsep_radius(zclus,3,H0=cosmo.H0,Om0=cosmo.Om0)) & (sepgal < angsep_radius(zclus,5,H0=cosmo.H0,Om0=cosmo.Om0))
+    masksep_Nf_loc = ((sepgal > angsep_radius(zclus, 3 / (1 + zclus), H0=cosmo.H0, Om0=cosmo.Om0)) & 
+                      (sepgal < angsep_radius(zclus, 5 / (1 + zclus), H0=cosmo.H0, Om0=cosmo.Om0))) ## comoving
+                      
     M, z = galmc[:Nmc,masksep_Nf_loc,4], galmc[:Nmc,masksep_Nf_loc,3]
     z = np.minimum(np.maximum(zz[0], z), zz[-1])
     mask_Nf_loc = (M > Mlim10_mc[:Nmc,masksep_Nf_loc]) & (z >= zinf) & (z < zsup)
@@ -250,7 +256,9 @@ def field_mass_density(inputs):
     #dNM_f_loc = np.sqrt(np.sum(np.array([len(galmc[imc,masksep_Nf_loc,4][mask_Nf_loc[imc]]) for imc in range(Nmc)])))/Nmc
     dNM_f_loc = np.std(np.array([np.sum(10**galmc[imc,masksep_Nf_loc,4][mask_Nf_loc[imc]]) for imc in range(Nmc)]))
 
-    loc = [NM_f_loc, dNM_f_loc]
+    #loc = [NM_f_loc, dNM_f_loc]
+    loc = [NM_f_glob, dNM_f_glob]  ##comoving
+    area_f_loc = fov_area  ##comoving
     
     return glob, loc, area_f_loc    
 
@@ -280,7 +288,7 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     #print('start',indc)
     H0_fid = 70.
     Om0_fid=0.3
-    H0_mock = 73. #H0_fid
+    H0_mock = H0_fid
     Om0_mock = Om0_fid
     rrMpc_coarse = rrMpc[::2]
     warnings.simplefilter("ignore")
@@ -290,8 +298,8 @@ def R200(indc,clus_id,colnames,weights_id,head2d,pdzclus_id,sigz68_z_id,galmc,Nm
     decclus=clus['dec'][indc] 
     zclus=clus['z'][indc]
     
-    if not(indc%int(len(clus)/(100/5))):
-        print(int(100*indc/len(clus)),'% completed')
+    #if not(indc%int(len(clus)/(100/5))):
+    #    print(int(100*indc/len(clus)),'% completed')
     
     w2d = wcs.WCS(head2d)
     weights = np.copy(weights_id)
@@ -404,35 +412,12 @@ def get_R200(detectifz):
                                     detectifz.data.galcat_mc[:,:,3]), 
                          detectifz.data.zz[-1])
         
-        Mlim10_mc = Mlim_DETECTIFz(detectifz.data.logMlim90,10,zmc)
+        #Mlim10_mc = Mlim_DETECTIFz(detectifz.data.logMlim90,10,zmc)
+        Mlim10_mc = detectifz.data.lgmass_lim * np.ones_like(zmc)
         
         memo = 1.8*1024**3 #1.5 * (im3d.nbytes + weights.nbytes)
         mem_avail = 10*1024**3 #psutil.virtual_memory().available
-        '''
-        if memo < 0.9*mem_avail:    
-            memo_obj = int(0.9*memo)
-            ray.init(num_cpus=detectifz.config.nprocs, 
-                     object_store_memory=memo_obj,ignore_reinit_error=True,log_to_driver=False)
-    
-            weights_id = ray.put(detectifz.weights2d)  
-            clus_id = ray.put(detectifz.clus.to_pandas().to_numpy())
-            pdzclus_id = ray.put(detectifz.pdzclus)
-            sigz68_z_id = ray.put(detectifz.data.sigs.sigz68_z)
-            galmc_id = ray.put(detectifz.data.galcat_mc)
-            Mlim10_mc_id = ray.put(Mlim10_mc)
 
-            #try:
-            #Nmc = 10  #work on 10 realisation only for speed
-            res = ray.get([R200.remote(indc, clus_id, detectifz.clus.colnames, 
-                                       weights_id, detectifz.head2d, pdzclus_id, 
-                                       sigz68_z_id, galmc_id, detectifz.config.Nmc, rrMpc, 
-                                       Mlim10_mc_id, detectifz.data.zz) 
-                           for indc in range(nclus)],timeout=5000)  
-
-            ray.shutdown()
-            res = np.array(res)
-        '''
-        
         res = np.array(Parallel(n_jobs=int(1 * detectifz.config.nprocs), max_nbytes=1e6)(
             delayed(R200)(
                 indc, 
@@ -474,9 +459,6 @@ def get_R200(detectifz):
         clus_r200.add_column(Column(r200fit[:,2],name='R200c_Mass_u68'))
         clus_r200.write(clusf,overwrite=True)
         print('R200 done in', time.time()-start,'s')
-        '''
-        else:
-            raise ValueError('Not enough memory available : ',memo,'<',mem_avail)
-        '''    
+
              
     return clus_r200 

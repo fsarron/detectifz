@@ -11,45 +11,38 @@ do
 done
 
 # use here your expected variables
-echo "WORKDIR = $WORKDIR"
+echo "ROOTDIR = $ROOTDIR"
+echo "FIELD = $FIELD"
+echo "RELEASE = $RELEASE"
 echo "SCRIPTS_DIR = $SCRIPTS_DIR"
+
 echo "EXTRA_VALUES = $EXTRA_VALUES"
 
 #detectifz_dir = ${1}
 #detectifz_exec = ${2}
 
-
 ##TO DO PRIOR TO LAUNCH
-#mkdir $WORKDIR
-#cp $SCRIPTS_DIR/config_tile.py $WORKDIR
-#cp $SCRIPTS_DIR/config_master_detectifz_GAEA.py $WORKDIR/config_master_detectifz.py
+WORKDIR=$ROOTDIR/$FIELD/$RELEASE
+mkdir $ROOTDIR/$FIELD
+mkdir $WORKDIR
+cp $SCRIPTS_DIR/config_tile.ini $WORKDIR/config_tile.ini
+cp $SCRIPTS_DIR/config_detectifz.ini $WORKDIR/config_master_detectifz.ini
+cp $SCRIPTS_DIR/torque_run_detectifz_tile.sh $WORKDIR/
 
 cd $WORKDIR
-#cp $SCRIPTS_DIR/run_tiling.py .
 
-#field=`cat config_tile.py | grep 'field =' | awk '{print $3}'`
-#field="${field#?}" # removes first character
-#field="${field%?}"  # removes last character
-field='H15_UDS'
-echo
-#cp $SCRIPTS_DIR/config_master_detectifz_GAEA.py $WORKDIR/${field}_DETECTIFzrun/config_master_detectifz.py
 
-#python run_tiling.py -c config_tile.py
+#make_input_Euclid --configuration=config_tile.ini
 
-for i in $(ls -d ${field}_DETECTIFzrun/*/)
+#run_tiling --configuration=config_tile.ini
+
+for i in $(ls -d */)
 do 
     tileid=`echo ${i%%/} | awk -F / '{print $2}'`
     echo $tileid
-    cd $WORKDIR/${i}
-    echo pwd
-    cp $SCRIPTS_DIR/run_detectifz_tile.py .
-    echo python run_detectifz_tile.py -c config_detectifz.py -t $tileid
-    SECONDS=0
-    python run_detectifz_tile.py -c config_detectifz.py -t $tileid
-    DURATION_IN_SECONDS=` echo $tileid completed in $SECONDS seconds`
-    echo
-    echo $DURATION_IN_SECONDS
-    echo
+    tiledir=$WORKDIR/${i}
+    cd $tiledir
+    qsub $WORKDIR/torque_run_detectifz_tile.sh -v 'tiledir='$tiledir', config_file=config_detectifz.ini, tile='$tilei
 done
 
 

@@ -6,8 +6,9 @@ from astropy.coordinates import SkyCoord
 from photutils import SkyCircularAperture
 
 from scipy.ndimage.filters import gaussian_filter1d
+import regions
 
-from .utils import angsep_radius, nan_helper, detectifz2radec
+from .utils import angsep_radius, physep_ang, nan_helper, detectifz2radec
 
 
 def group_consecutives(vals, step=1):
@@ -75,13 +76,31 @@ def cleaning(detectifz, det):
         D = SkyCoord(ra=det["ra"] * units.degree, dec=det["dec"] * units.degree)
         sep = D.separation(C)
 
-        idm = np.where(sep < angsep_radius(clus0["z"], detectifz.config.dclean))[0]
+        if detectifz.config.objects_detected == 'groups':
+            idm = np.where(sep < angsep_radius(clus0["z"], detectifz.config.dclean))[0] #in proper coordinates
+        elif detectifz.config.objects_detected == 'protoclusters':
+            mask_dclean = sep < angsep_radius(clus0["z"], detectifz.config.dclean / (1 + clus0["z"])) #in comoving coordinates.
 
+            #bbox_center_sky = SkyCoord(ra=0.5*(clus0['bbox_ramax']+clus0['bbox_ramin']),
+            #                   dec=0.5*(clus0['bbox_decmax']+clus0['bbox_decmin']),
+            #                   unit='deg')  
+        
+            bbox_center_sky = SkyCoord(ra=clus0['ra'],
+                               dec=clus0['dec'],
+                               unit='deg')
+            sky_region = regions.RectangleSkyRegion(center=bbox_center_sky[0], 
+                                            width=0.75 * np.abs(clus0['bbox_ramax'][0]-clus0['bbox_ramin'][0]) * units.deg,
+                                            height=0.75 * np.abs(clus0['bbox_decmax'][0]-clus0['bbox_decmin'][0]) * units.deg)
+            mask_inbox = sky_region.contains(D, wcs=wcs.WCS(detectifz.head2d))
+            mask_merge = mask_inbox + mask_dclean
+            idm = np.where(mask_merge)[0]  
+
+        
         idc = np.where(zc == clus0["z"])[0][0]
         idx = np.sort(det[idm]["slice_idx"])
 
         g = group_consecutives(np.unique(idx))
-        tmp = np.empty_like(g)
+        tmp = [None]*len(g)
         for i in range(len(g)):
             tmp[i] = np.isin(idc, g[i])
         idg = np.where(tmp)[0][0]
@@ -89,9 +108,12 @@ def cleaning(detectifz, det):
         idg2idm = np.where(np.isin(det[idm]["slice_idx"], g[idg]))[0]
         idxclean = np.where(np.isin(det["idu"], det[idm][idg2idm]["idu"]))[0]
 
-        detmult.append(det[idxclean])
 
         if clus0["SN"] >= detectifz.config.SNmin:
+            
+            detmult.append(det[idxclean])
+
+            
             clus0["zinf"] = np.min(det[idm][idg2idm]["zinf"])
             clus0["zsup"] = np.max(det[idm][idg2idm]["zsup"])
             clus0["slice_idx_inf"] = np.min(det[idm][idg2idm]["slice_idx"])
@@ -105,9 +127,46 @@ def cleaning(detectifz, det):
     # clus.remove_column('log_dgal')
     clus.add_column(Column(np.arange(indc), name="id"))
 
+    idx_sort = np.argsort(clus['z'])
     clus.sort("z")
-    # clus.write('candidats_'+field+'_SN'+SNmin+'.fits',overwrite=True)
+    detmult = [detmult[x] for x in idx_sort]
     
+    ### This is for protoclusters 
+    ### -- NEED to put these parms in the config file ! 
+    
+    if detectifz.config.objects_detected == 'protoclusters':
+    
+        requiv = np.zeros(len(clus)) * units.Mpc
+
+        for ic in range(len(clus)):
+            xmin = np.min(detmult[ic]['bbox_ramin'])
+            xmax = np.max(detmult[ic]['bbox_ramax'])
+            ymin = np.min(detmult[ic]['bbox_decmin'])
+            ymax = np.max(detmult[ic]['bbox_decmax'])
+
+            requiv[ic] = np.sqrt(physep_ang(clus['z'][ic], (ymax-ymin)) * 
+                                 physep_ang(clus['z'][ic], (xmax-xmin)) / np.pi) * (1 + clus['z'][ic])
+
+            clus[ic]['bbox_ramin'] = xmin
+            clus[ic]['bbox_ramax'] = xmax
+            clus[ic]['bbox_decmin'] = ymin
+            clus[ic]['bbox_decmax'] = ymax
+
+        ndets = np.array([len(detmult[ic]) for ic in range(len(clus))])
+
+        clus['rMpc_subdets_cMpc'] = requiv
+        clus['ndets'] = ndets
+
+        
+    if detectifz.config.objects_detected == 'protoclusters':
+        ### JWST Protoclusters r_equiv_min_cMpc = 0, n_subdets_min = 3
+        ### Euclid Protoclusters tests : r_equiv_min_cMpc = 0.5, n_subdets_min = 3
+        mask_proto_keep = ((requiv > detectifz.config.r_equiv_min_cMpc * units.Mpc ) & 
+                           (ndets > detectifz.config.n_subdets_min))
+
+        clus = clus[mask_proto_keep]
+        detmult = [detmult[x] for x in mask_proto_keep]
+        
     #TO DO revert to ra, dec when coord_change !
     #clus.rename_columns(['ra', 'dec'], ['ra_detectifz', 'dec_detectifz'])
     #ra_original, dec_original = detectifz2radec(detectifz.data.skycoords_center, 
@@ -157,17 +216,28 @@ def clus_pdz_im3d(detectifz, smooth):
         np.max(detectifz.zslices[:, 0]), zzbin
     )
     slice_idx_shift = np.digitize(np.min(detectifz.zslices[:, 0]), zzbin) - 1
-    # izi_cut, izs_cut = clus['slice_idx_inf'].astype(int)+slice_idx_shift, clus['slice_idx_sup'].astype(int)+slice_idx_shift
-    izi_cut, izs_cut = (
-        np.digitize(detectifz.clus["zinf"], zzbin) - 1,
-        np.digitize(detectifz.clus["zsup"], zzbin) - 1,
-    )
+    izi_cut, izs_cut = (detectifz.clus['slice_idx_inf'].astype(int)+slice_idx_shift, 
+                        detectifz.clus['slice_idx_sup'].astype(int)+slice_idx_shift
+                       )
+    #izi_cut, izs_cut = (
+    #    np.digitize(detectifz.clus["zinf"], zzbin) - 1,
+    #    np.digitize(detectifz.clus["zsup"], zzbin) - 1,
+    #)
+    
+    
 
     for indc in range(nclus):
         # print(indc)
-        aper = SkyCircularAperture(
-            clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 0.25)
-        )
+        
+        if detectifz.config.objects_detected == 'groups': 
+            aper = SkyCircularAperture(
+                clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 0.25)
+            )
+        elif detectifz.config.objects_detected == 'protoclusters':
+            aper = SkyCircularAperture(
+                clussky[indc], r=angsep_radius(detectifz.clus["z"][indc], 2 / (1 + detectifz.clus["z"][indc]))
+            )##comoving
+        
         aper_pix = aper.to_pixel(w2d)
         aper_masks = aper_pix.to_mask(method="center")
         aper_data = np.array(
@@ -176,7 +246,7 @@ def clus_pdz_im3d(detectifz, smooth):
 
         aper_data[:, ~aper_masks.data.astype(bool)] = np.nan
         
-        print('SHAPES', pdzclus[indc, izi_im3d:izs_im3d].shape, len(detectifz.im3d))
+        #print('SHAPES', pdzclus[indc, izi_im3d:izs_im3d].shape, len(detectifz.im3d))
         
         pdzclus[indc, izi_im3d:izs_im3d] = (
             10 ** np.nanmean(aper_data, axis=(1, 2)) - 1

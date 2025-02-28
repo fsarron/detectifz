@@ -16,6 +16,7 @@ import numba as nb
 
 from astropy.convolution import convolve, Gaussian1DKernel, Gaussian2DKernel
 
+from detectifz.utils import celestial_rectangle_area
 
 @nb.njit(parallel=True)
 def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NMmax, 
@@ -229,7 +230,9 @@ class Tiles(object):
         max_area = self.config_tile.max_area
         border_width = self.config_tile.border_width
         
-        total_area = (ramax-ramin)*(decmax-decmin)
+        #total_area = (ramax-ramin)*(decmax-decmin)
+        total_area = celestial_rectangle_area(ramin, decmin, ramax, decmax)
+        
         Nmin_tiles =  total_area/max_area
         Nsplit = np.ceil(np.sqrt(Nmin_tiles)).astype(int) + 1 
         

@@ -10,9 +10,9 @@ import h5py
 from pathlib import Path
 from astropy.io import fits
 import ray
-from . import density, detection, cleaning, r200, members
+from . import density, detection, cleaning, r200, members, membership_jwst
 from .tiling import Tile
-from .utils import Mlim_DETECTIFz
+from .utils import Mlim_DETECTIFz, detectifz2radec
 from astropy import units
 from collections import namedtuple
 
@@ -20,21 +20,8 @@ import time
 
 import warnings
 from astropy.utils.exceptions import AstropyWarning,AstropyUserWarning
-###missing many imports  
 
 warnings.filterwarnings("ignore")
-
-#def Mlim(field,masslim,z):
-#    if field == 'UDS' or field == 'H15_UDS':
-#        Mlim = 7.847 + 1.257*z - 0.150*z**2
-#    if field == 'UltraVISTA' or field == 'H15_UltraVISTA':
-#        Mlim = 8.378 + 1.262*z - 0.153*z**2
-#    if field == 'VIDEO' or field == 'H15_VIDEO':
-#        Mlim = 8.455 + 1.697*z - 0.278*z**2
-#    else:
-#        raise ValueError('field'+field+' is not implemented !')
-#    return np.maximum(Mlim,masslim)
-
 
 class DETECTIFz(object):
     
@@ -113,7 +100,7 @@ class DETECTIFz(object):
         i=0
 
         while (zhigh[i] < self.config.zmax):
-            jj = np.int((zcentre[i]-self.data.zz[0])/dz)
+            jj = np.intc((zcentre[i]-self.data.zz[0])/dz)
             if self.data.sigs.sigz68_z[jj] > 0:
                 zlow.append(zcentre[i] - max(0.01,self.data.sigs.sigz68_z[jj]))
                 zhigh.append(zcentre[i] + max(0.01,self.data.sigs.sigz68_z[jj]))
@@ -132,7 +119,7 @@ class DETECTIFz(object):
         self.zslices = self.zslices[zinf > self.config.zmin]  #added compared to Legacy version (Sarron+21)
         
 
-    def run(self):
+    def run_main(self):
         
         if not sys.warnoptions:
             warnings.simplefilter('ignore', category=AstropyWarning)
@@ -145,9 +132,19 @@ class DETECTIFz(object):
         clusdetf = (self.config.rootdir+'/candidats_'+self.field+'_SN'+str(self.config.SNmin)+
                     '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.fits')
         pdzclusdetf = (self.config.rootdir+'/pdz_im3d.candidats_'+self.field+'_SN'+str(self.config.SNmin)+
-                       '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')   
-    
+                       '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
         
+        subdetsf = (self.config.rootdir+'/subdets_'+self.field+'_SN'+str(self.config.SNmin)+
+                    '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
+        
+        det_slicesf = (self.config.rootdir+'/detslices_'+self.field+'_SN'+str(self.config.SNmin)+
+                    '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
+
+        alldet_f = (self.config.rootdir+'/alldet_'+self.field+'_SN'+str(self.config.SNmin)+
+                    '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
+        
+        segm_f = (self.config.rootdir+'/segm_'+self.field+'_SN'+str(self.config.SNmin)+
+                    '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
         print('get catalogue')
         if Path(clusdetf).is_file() and Path(pdzclusdetf).is_file():
             print('clus and pdzclus file exists, we just read it')
@@ -155,24 +152,38 @@ class DETECTIFz(object):
             self.pdzclus = np.load(pdzclusdetf)['pz']
         else:    
             print('run detection')
-            self.det_slices, alldet, pos_slices = detection.detection(self)
-       
+            self.det_slices, alldet, pos_slices, segm = detection.detection(self)
+            np.savez(det_slicesf, *self.det_slices)
+            np.savez(alldet_f, *alldet)
+            np.savez(segm_f, *segm)
+
             print('run cleaning')
-            self.clus, self.selfsubdets = cleaning.cleaning(self,alldet)
+            self.clus, self.subdets = cleaning.cleaning(self,alldet)
             self.clus.write(clusdetf,overwrite=True)
+            np.savez(subdetsf, *self.subdets)
             print('run clus_pdz')
-        #clus,pdzclus = clus_pdz(survey,gal_Mlim,pdz_Mlim,zz,masks_im,headmasks,clus0,2)
             self.pdzclus = cleaning.clus_pdz_im3d(self,1)
             #self.clus.write(clusdetf,overwrite=True)
             np.savez(pdzclusdetf,pz=self.pdzclus,z=self.data.zz)
         
-       
+        # Obtaining ICRS coordinates on the final detection catalog
+
+        true_ra, true_dec = detectifz2radec(self.data.skycoords_center,[self.clus['ra'],self.clus['dec']])
+        self.tmaster = self.clus
+        self.tmaster['ra_detectifz'] = self.tmaster['ra']
+        self.tmaster['dec_detectifz'] = self.tmaster['dec']
+        self.tmaster['ra'] = true_ra
+        self.tmaster['dec'] = true_dec
+        self.tmaster.write(self.config.rootdir+'/detections_'+self.field+'.fits',overwrite=True)
+        
+
+    def run_R200(self):
         print('run R200')
         clus_r200 = r200.get_R200(self)
     
         ##clean
-        self.clus_r200_clean = clus_r200[clus_r200['R200c_Mass_median'] > 0.1]
-        self.pdzclus_r200_clean = self.pdzclus[clus_r200['R200c_Mass_median'] > 0.1]
+        self.clus_r200_clean = clus_r200[clus_r200['R200c_Mass_median'] > 0.0]
+        self.pdzclus_r200_clean = self.pdzclus[clus_r200['R200c_Mass_median'] > 0.0]
         
         ##save
         self.clus_r200_clean.write(self.config.rootdir+'/candidats_'+self.field+'_SN'+str(self.config.SNmin)+
@@ -181,15 +192,42 @@ class DETECTIFz(object):
         np.savez(self.config.rootdir+'/pdz_im3d.candidats_'+self.field+'_SN'+str(self.config.SNmin)+
                  '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.r200.clean.npz',
                  pz=self.pdzclus_r200_clean,z=self.data.zz)
-    
         
 
+    def run_Pmem_jwst(self):
+        print('run Pmem JWST')
+        pdzgal_arx = np.load(self.config.rootdir+'galaxies.'+self.field+'.pdz.npz')
+        pdzgal = pdzgal_arx['pz']
+        zzgal = pdzgal_arx['z']
+        
+        pmem24, pmem21_z, pmem21_Mz, pconv_z, pconv_Mz, prior_clus, mask_inclus, prior_z, Npos, NtotR, Nbkg, wnoclus= membership_jwst.get_pmem(self, zzgal, pdzgal)
+        
+        pmemf = (self.config.rootdir+'/p_mem.'+self.field+'_SN'+str(self.config.SNmin)+
+                    '_Mlim'+str(np.round(self.config.lgmass_lim,2))+'.sigz68_z_'+self.config.avg+'.npz')
+
+        
+        np.savez(pmemf, 
+                 pmem24=pmem24,
+                 pmem21_z=pmem21_z,
+                 pmem21_Mz=pmem21_Mz,
+                 pconv_z=pconv_z,
+                 pconv_Mz=pconv_Mz,
+                 prior_clus = prior_clus,
+                 mask_inclus=mask_inclus,
+                 prior_z = prior_z, 
+                 Npos = Npos, 
+                 NtotR = NtotR, 
+                 Nbkg = Nbkg,
+                 wnoclus = wnoclus)
+    
+        
+    
     
     def run_Pmem(self):
     
         print('run im3d_info')
         #start_im3d_info = time.time()
-        im3d_info_f = ( 'im3d_info.'+self.field+'_Mlim'+str(np.round(self.param.lgmass_lim,2))+'_SN'+str(self.config.SNmin)+
+        im3d_info_f = ( 'im3d_info.'+self.field+'_Mlim'+str(np.round(self.config.lgmass_lim,2))+'_SN'+str(self.config.SNmin)+
                        '.sigz68_z_'+self.config.avg+'.r200.clean.im3d.npz' )
         if Path(im3d_info_f).is_file():
             im3d_info = np.load(im3d_info_f,allow_pickle=True)['im3d_info']
@@ -200,8 +238,6 @@ class DETECTIFz(object):
             np.savez(im3d_info_f,im3d_info=im3d_info)
         #print('im3d_info done in ',time.time()-start_im3d_info,'s') 
         
-        
-        '''
         print('run get_nfield_noclus')
         NFf = 'NF.Mz.'+field+'.PDF_Mz.noclus.SN'+str(SNmin)+'.'+str(radnoclus)+'r200.sSFR_10.7.npz'
         w3df = 'weights3d.'+field+'.noclus.SN'+str(SNmin)+'.'+str(radnoclus)+'r200.npz'    
@@ -288,8 +324,7 @@ class DETECTIFz(object):
                       '_Mlim10.PDF_Mz.irac.sigz68_z_'+avg+
                       '.r200.clean.Ngal_SMtot.sigM95.M90.smooth.Pcclus.fits')
         clus.write(clusfinalf,overwrite=True)
-        '''
+        
     
 
-    
     
