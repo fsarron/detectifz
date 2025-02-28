@@ -1,19 +1,21 @@
 name: Auto Approve Pull Request
+
 on:
-issue_comment:
-types: [created]
+  issue_comment:
+    types: [created]
 
 jobs:
-auto-approve:
-if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '-APPROVED-') }}
-runs-on: ubuntu-latest
-steps:
-- name: Checkout repository
-uses: actions/checkout@v4
-- name: Approve Pull Request
-env:
-    GH_TOKEN: ${{ secrets.APPROVER_TOKEN }}
-    PR_NUMBER: ${{ github.event.issue.number || inputs.pr_number }}
-    GITHUB_REPOSITORY: ${{ github.repository }}
-run: |
-    gh pr review $PR_NUMBER --approve -R $GITHUB_REPOSITORY
+  auto-approve:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '-APPROVED-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Approve Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.APPROVER_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          gh pr review $PR_NUMBER --approve -R $GITHUB_REPOSITORY
