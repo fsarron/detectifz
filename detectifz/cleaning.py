@@ -3,7 +3,7 @@ from astropy.table import Table, Column, vstack
 from astropy import units
 from astropy import wcs
 from astropy.coordinates import SkyCoord
-from photutils import SkyCircularAperture
+from photutils.aperture import SkyCircularAperture
 
 from scipy.ndimage.filters import gaussian_filter1d
 import regions

@@ -7,8 +7,8 @@ from astropy.coordinates import SkyCoord
 import astropy.cosmology
 from astropy.table import Table,Column,vstack
 from astropy.io import fits
-from photutils import SkyCircularAnnulus,SkyCircularAperture
-from photutils import aperture_photometry
+from photutils.aperture import SkyCircularAnnulus,SkyCircularAperture
+from photutils.aperture import aperture_photometry
 from astropy.wcs.utils import proj_plane_pixel_area
 from astropy import wcs
 from astropy.stats import sigma_clipped_stats

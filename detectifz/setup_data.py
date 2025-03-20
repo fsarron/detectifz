@@ -7,9 +7,9 @@ from astropy.io import fits
 import ray
 
 import scipy.stats
-import qp
+#import qp
 from twopiece.scale import tpnorm
-from .utils import weighted_quantile, radec2detectifz, detectifz2radec, numba_loop_kde
+from .utils import weighted_quantile, radec2detectifz, detectifz2radec #, numba_loop_kde
 
 from collections import namedtuple
 
@@ -24,7 +24,7 @@ from astropy import wcs
 import subprocess
 from scipy.ndimage.filters import gaussian_filter1d
 
-#@nb.njit(parallel=True)
+@nb.njit(parallel=True)
 def quantile_sig_mc(sig_indiv, binz_MC, Nz, Nzmin, Nzmax, binM_MC, NM, NMmin, NMmax, 
                     idx_lgmass_lim, quantile, Nmc):
     mask_Mlim = (binM_MC >= idx_lgmass_lim)

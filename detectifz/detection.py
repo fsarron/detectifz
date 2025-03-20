@@ -15,9 +15,9 @@ from astropy import units
 from astropy.table import Table, Column, vstack
 from astropy.coordinates import SkyCoord
 
-from photutils import CircularAperture, CircularAnnulus
-from photutils import SkyCircularAnnulus, SkyCircularAperture
-from photutils import SourceCatalog, detect_sources, deblend_sources
+from photutils.aperture import CircularAperture, CircularAnnulus
+from photutils.aperture import SkyCircularAnnulus, SkyCircularAperture
+from photutils.segmentation import SourceCatalog, detect_sources, deblend_sources
 
 from .utils import angsep_radius, physep_ang
 

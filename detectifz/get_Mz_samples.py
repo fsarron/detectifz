@@ -4,7 +4,7 @@ import multiprocessing
 from pathlib import Path
 from astropy.table import Table
 import scipy.stats
-import numba as nb
+#import numba as nb
 import h5py
 from scipy.interpolate import interp1d
 from numpy.random import RandomState
@@ -63,7 +63,7 @@ def sample_tpdf(tpdf_z, zz, size):
     return samples
 
 ncpus = int(multiprocessing.cpu_count())
-nb.set_num_threads(ncpus)
+#nb.set_num_threads(ncpus)
 
 def run_samples(config,Nmc):
 
