@@ -294,6 +294,7 @@ def det_photutils(objects_detected, SNmin, l, centre_id, zinf_id, zsup_id, im3d_
         pos = pos[np.where(rr > 0.01)]
 
     else:
+        segm_deblend = np.array([])
         tab = np.array([])
         pos = np.array([])
 
