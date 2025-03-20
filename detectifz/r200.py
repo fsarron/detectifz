@@ -17,8 +17,8 @@ from joblib import Parallel, delayed
 from .utils import angsep_radius, physep_ang, Mlim_DETECTIFz
 
 from astropy.coordinates import SkyCoord
-from photutils import CircularAperture, CircularAnnulus
-from photutils import SkyCircularAnnulus, SkyCircularAperture
+from photutils.aperture import CircularAperture, CircularAnnulus
+from photutils.aperture import SkyCircularAnnulus, SkyCircularAperture
 
 from astropy.wcs.utils import proj_plane_pixel_area,proj_plane_pixel_scales
 

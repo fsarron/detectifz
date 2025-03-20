@@ -85,7 +85,7 @@ def run_samples(config,Nmc):
 
         ### redshift 
         print('read table...')
-        table_pdz = Table.read(table_pdzf,format='ascii.ecsv')
+        table_pdz = Table.read(table_pdzf)
         print('done.')
             
         print('convert to array...')
